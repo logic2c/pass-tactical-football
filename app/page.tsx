@@ -1,6 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import {
+  BLUE_GOAL,
+  RED_GOAL,
+  enemyGoal,
+  isGoal,
+  movementTargets,
+  passPath,
+  sprintTargets,
+} from "./game-rules";
 
 type Team = "red" | "blue";
 type Suit = "rock" | "bishop" | "knight";
@@ -14,7 +23,7 @@ type Phase =
   | "kickoff"
   | "gameover";
 type ActionMode = "move" | "pass" | "tackle" | null;
-type ResponseMove = "card" | "discard" | null;
+type ResponseStep = "card" | "discard";
 
 type ActionCard = { id: string; kind: "action"; suit: Suit };
 type BallCard = { id: "football"; kind: "ball" };
@@ -34,6 +43,7 @@ type PassState = {
   payload: GameCard[];
   responders: string[];
   responseIndex: number;
+  responseStep: ResponseStep;
   blockerId?: string;
   targetId?: string;
 };
@@ -48,14 +58,13 @@ type GameState = {
   phase: Phase;
   pass?: PassState;
   discardQueue: string[];
+  discardResume?: "next-turn" | "kickoff";
   log: string[];
   kickoffReason: string;
   winner?: Team;
 };
 
 const TURN_ORDER = ["r1", "b1", "b2", "r2", "r3", "b3"];
-const RED_GOAL = 60; // e1
-const BLUE_GOAL = 4; // e8
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"];
 
 const SUIT_INFO: Record<Suit, { name: string; icon: string; caption: string }> = {
@@ -166,20 +175,18 @@ function nextTurn(game: GameState) {
   game.phase = "turn";
   game.pass = undefined;
   game.discardQueue = [];
+  game.discardResume = undefined;
   addLog(game, `轮到 ${activePlayer(game).label}。`);
 }
 
 function finishAction(game: GameState) {
-  const overflowing = TURN_ORDER.filter((id) => {
-    const player = playerById(game, id);
-    return player.hand.length > handLimit(game, player);
-  });
-
-  if (overflowing.length > 0) {
+  const endingPlayer = activePlayer(game);
+  if (endingPlayer.hand.length > handLimit(game, endingPlayer)) {
     game.phase = "discard";
-    game.discardQueue = overflowing;
+    game.discardQueue = [endingPlayer.id];
+    game.discardResume = "next-turn";
     game.pass = undefined;
-    addLog(game, "有球员超过手牌上限，需要先弃牌。");
+    addLog(game, `${endingPlayer.label} 的回合结束，需要将手牌弃至上限。`);
     return;
   }
   nextTurn(game);
@@ -217,131 +224,38 @@ function moveBallTo(game: GameState, recipientId: string) {
   playerById(game, recipientId).hand.push(ball ?? { id: "football", kind: "ball" });
 }
 
-function kickoff(game: GameState, receiverId: string, reason: string) {
+function kickoff(game: GameState, receiverId: string, reason: string, endingPlayerId?: string) {
   moveBallTo(game, receiverId);
   game.offense = playerById(game, receiverId).team;
   game.turnIndex = TURN_ORDER.indexOf(receiverId);
-  game.phase = "kickoff";
   game.pass = undefined;
   game.discardQueue = [];
+  game.discardResume = undefined;
   game.kickoffReason = reason;
   resetFormation(game);
   addLog(game, `${reason} ${playerById(game, receiverId).label} 获得球权，双方重新布阵。`);
+
+  const endingPlayer = endingPlayerId ? playerById(game, endingPlayerId) : undefined;
+  if (endingPlayer && endingPlayer.hand.length > handLimit(game, endingPlayer)) {
+    game.phase = "discard";
+    game.discardQueue = [endingPlayer.id];
+    game.discardResume = "kickoff";
+    addLog(game, `${endingPlayer.label} 需先处理自己回合结束时的超限手牌。`);
+  } else {
+    game.phase = "kickoff";
+  }
+}
+
+function returnPassPayload(game: GameState) {
+  if (!game.pass) return;
+  const passer = playerById(game, game.pass.passerId);
+  passer.hand.push(...game.pass.payload);
+  game.pass.payload = [];
 }
 
 function isOwnHalf(player: Player, position: number) {
   const row = Math.floor(position / 8);
   return player.team === "red" ? row >= 4 : row <= 3;
-}
-
-function isGoal(position: number) {
-  return position === RED_GOAL || position === BLUE_GOAL;
-}
-
-function enemyGoal(team: Team) {
-  return team === "red" ? BLUE_GOAL : RED_GOAL;
-}
-
-function movementTargets(game: GameState, player: Player, suit: Suit) {
-  const targets = new Set<number>();
-  const row = Math.floor(player.position / 8);
-  const col = player.position % 8;
-  const occupied = new Set(game.players.map((item) => item.position));
-  const add = (nextRow: number, nextCol: number) => {
-    if (nextRow < 0 || nextRow > 7 || nextCol < 0 || nextCol > 7) return;
-    const position = nextRow * 8 + nextCol;
-    if (!occupied.has(position) && !isGoal(position)) targets.add(position);
-  };
-
-  if (suit === "knight") {
-    [
-      [-2, -1],
-      [-2, 1],
-      [-1, -2],
-      [-1, 2],
-      [1, -2],
-      [1, 2],
-      [2, -1],
-      [2, 1],
-    ].forEach(([rowDelta, colDelta]) => add(row + rowDelta, col + colDelta));
-  } else {
-    const directions =
-      suit === "rock"
-        ? [
-            [-1, 0],
-            [1, 0],
-            [0, -1],
-            [0, 1],
-          ]
-        : [
-            [-1, -1],
-            [-1, 1],
-            [1, -1],
-            [1, 1],
-          ];
-    const range = player.team === game.offense ? 3 : 1;
-    directions.forEach(([rowDelta, colDelta]) => {
-      for (let distance = 1; distance <= range; distance += 1) {
-        add(row + rowDelta * distance, col + colDelta * distance);
-      }
-    });
-  }
-
-  if (hasBall(player)) targets.add(enemyGoal(player.team));
-  return targets;
-}
-
-function sprintTargets(game: GameState, player: Player, distance: number) {
-  const targets = new Set<number>();
-  const row = Math.floor(player.position / 8);
-  const col = player.position % 8;
-  const occupied = new Set(game.players.map((item) => item.position));
-  for (let nextRow = 0; nextRow < 8; nextRow += 1) {
-    for (let nextCol = 0; nextCol < 8; nextCol += 1) {
-      const position = nextRow * 8 + nextCol;
-      if (
-        Math.abs(nextRow - row) + Math.abs(nextCol - col) === distance &&
-        !occupied.has(position) &&
-        !isGoal(position)
-      ) {
-        targets.add(position);
-      }
-    }
-  }
-  return targets;
-}
-
-function passPath(from: number, to: number, suit: Suit): number[] | null {
-  const fromRow = Math.floor(from / 8);
-  const fromCol = from % 8;
-  const toRow = Math.floor(to / 8);
-  const toCol = to % 8;
-  const rowDelta = toRow - fromRow;
-  const colDelta = toCol - fromCol;
-
-  if (suit === "knight") {
-    const rowDistance = Math.abs(rowDelta);
-    const colDistance = Math.abs(colDelta);
-    if (!((rowDistance === 2 && colDistance === 1) || (rowDistance === 1 && colDistance === 2))) {
-      return null;
-    }
-    const middleRow = fromRow + Math.sign(rowDelta) * (rowDistance === 2 ? 1 : 0);
-    const middleCol = fromCol + Math.sign(colDelta) * (colDistance === 2 ? 1 : 0);
-    return [middleRow * 8 + middleCol];
-  }
-
-  const isRock = suit === "rock" && (rowDelta === 0 || colDelta === 0);
-  const isBishop = suit === "bishop" && Math.abs(rowDelta) === Math.abs(colDelta);
-  if (!isRock && !isBishop) return null;
-
-  const rowStep = Math.sign(rowDelta);
-  const colStep = Math.sign(colDelta);
-  const distance = Math.max(Math.abs(rowDelta), Math.abs(colDelta));
-  const path: number[] = [];
-  for (let step = 1; step < distance; step += 1) {
-    path.push((fromRow + rowStep * step) * 8 + fromCol + colStep * step);
-  }
-  return path;
 }
 
 function passTargets(game: GameState) {
@@ -377,7 +291,6 @@ export default function Home() {
   const [actionMode, setActionMode] = useState<ActionMode>(null);
   const [payloadIds, setPayloadIds] = useState<string[]>([]);
   const [responseIds, setResponseIds] = useState<string[]>([]);
-  const [responseMove, setResponseMove] = useState<ResponseMove>(null);
   const [setupPlayerId, setSetupPlayerId] = useState<string>("r1");
 
   const current = activePlayer(game);
@@ -401,46 +314,34 @@ export default function Home() {
       return movementTargets(game, current, selectedCard.suit);
     }
     if (game.phase === "pass-target") return passTargets(game);
-    if (game.phase === "pass-response" && responderId && responseMove) {
+    if (game.phase === "pass-response" && responderId && game.pass) {
       const responder = playerById(game, responderId);
-      if (responseMove === "card" && responseIds.length === 1) {
+      if (game.pass.responseStep === "card" && responseIds.length === 1) {
         const card = responder.hand.find(
           (item): item is ActionCard => item.id === responseIds[0] && item.kind === "action",
         );
         return card ? movementTargets(game, responder, card.suit) : new Set<number>();
       }
-      if (responseMove === "discard" && responseIds.length > 0) {
+      if (game.pass.responseStep === "discard" && responseIds.length > 0) {
         return sprintTargets(game, responder, responseIds.length);
       }
     }
     return new Set<number>();
-  }, [game, actionMode, selectedCard, responderId, responseMove, responseIds, current]);
+  }, [game, actionMode, selectedCard, responderId, responseIds, current]);
 
   function clearSelections() {
     setSelectedCardId(null);
     setActionMode(null);
     setPayloadIds([]);
     setResponseIds([]);
-    setResponseMove(null);
   }
 
   function startKickoff() {
     setGame((previous) => {
       const next = structuredClone(previous);
       const kickoffPlayer = activePlayer(next);
-      const overflowing = TURN_ORDER.filter((id) => {
-        const player = playerById(next, id);
-        return player.hand.length > handLimit(next, player);
-      });
-      if (overflowing.length > 0) {
-        next.turnIndex = (next.turnIndex + TURN_ORDER.length - 1) % TURN_ORDER.length;
-        next.phase = "discard";
-        next.discardQueue = overflowing;
-        addLog(next, "攻防转换改变了手牌上限，开球前先处理超限手牌。");
-      } else {
-        next.phase = "turn";
-        addLog(next, `${kickoffPlayer.label} 开球，比赛继续。`);
-      }
+      next.phase = "turn";
+      addLog(next, `${kickoffPlayer.label} 开球，比赛继续。`);
       return next;
     });
     clearSelections();
@@ -468,7 +369,7 @@ export default function Home() {
     clearSelections();
   }
 
-  function useMove(position: number) {
+  function performMove(position: number) {
     if (!selectedCard || !validCells.has(position)) return;
     setGame((previous) => {
       const next = structuredClone(previous);
@@ -480,7 +381,7 @@ export default function Home() {
       if (position === enemyGoal(player.team) && hasBall(player)) {
         const receiverId = nextOpponent(next, player.id, player.team === "red" ? "blue" : "red");
         addLog(next, `${player.label} 试图带球进入球门，触发越位并交换球权。`);
-        kickoff(next, receiverId, "越位重开：");
+        kickoff(next, receiverId, "越位重开：", player.id);
         return next;
       }
 
@@ -492,7 +393,7 @@ export default function Home() {
     clearSelections();
   }
 
-  function useTackle(targetId: string) {
+  function performTackle(targetId: string) {
     if (!selectedCard || actionMode !== "tackle") return;
     setGame((previous) => {
       const next = structuredClone(previous);
@@ -543,6 +444,7 @@ export default function Home() {
         payload,
         responders,
         responseIndex: 0,
+        responseStep: "card",
       };
       next.phase = "pass-response";
       addLog(next, `${passer.label} 发起 ${SUIT_INFO[passCard.suit].name} Pass，倒扣 ${payload.length} 张牌。`);
@@ -554,40 +456,64 @@ export default function Home() {
   function advanceResponse(next: GameState) {
     if (!next.pass) return;
     next.pass.responseIndex += 1;
+    next.pass.responseStep = "card";
     if (next.pass.responseIndex >= next.pass.responders.length) {
-      next.phase = "pass-target";
-      addLog(next, `${playerById(next, next.pass.passerId).label} 现在必须选择传球目标。`);
+      const passer = playerById(next, next.pass.passerId);
+      if (passTargets(next).size === 0) {
+        const defendingTeam: Team = passer.team === "red" ? "blue" : "red";
+        const chooserId = nextOpponent(next, passer.id, defendingTeam);
+        next.pass.blockerId = chooserId;
+        next.phase = "intercept";
+        addLog(next, `场上没有合法传球目标，倒扣牌揭开，由 ${playerById(next, chooserId).label} 选择一张。`);
+      } else {
+        next.phase = "pass-target";
+        addLog(next, `${passer.label} 现在必须选择传球目标。`);
+      }
     }
   }
 
-  function stayDuringPass() {
+  function skipResponseStep() {
     setGame((previous) => {
       const next = structuredClone(previous);
       if (!next.pass) return previous;
       const responder = playerById(next, next.pass.responders[next.pass.responseIndex]);
-      addLog(next, `${responder.label} 在传球响应中选择原地不动。`);
-      advanceResponse(next);
+      if (next.pass.responseStep === "card") {
+        next.pass.responseStep = "discard";
+        addLog(next, `${responder.label} 跳过按牌移动，进入弃牌冲刺步骤。`);
+      } else {
+        addLog(next, `${responder.label} 完成响应移动。`);
+        advanceResponse(next);
+      }
       return next;
     });
     setResponseIds([]);
-    setResponseMove(null);
   }
 
-  function useResponseMove(position: number) {
-    if (!responderId || !responseMove || !validCells.has(position)) return;
+  function performResponseMove(position: number) {
+    if (!responderId || !game.pass || !validCells.has(position)) return;
     setGame((previous) => {
       const next = structuredClone(previous);
       if (!next.pass) return previous;
+      const passerId = next.pass.passerId;
       const responder = playerById(next, next.pass.responders[next.pass.responseIndex]);
       const selected = [...responseIds];
-      if (responseMove === "card" && selected.length === 1) {
+      if (next.pass.responseStep === "card" && selected.length === 1) {
         const index = responder.hand.findIndex((card) => card.id === selected[0] && card.kind === "action");
         if (index < 0) return previous;
         const [used] = responder.hand.splice(index, 1) as ActionCard[];
         next.discard.push(used);
+        if (position === enemyGoal(responder.team) && hasBall(responder)) {
+          returnPassPayload(next);
+          const receivingTeam: Team = responder.team === "red" ? "blue" : "red";
+          const receiverId = nextOpponent(next, responder.id, receivingTeam);
+          addLog(next, `${responder.label} 在响应移动中试图带球进入球门，触发越位并终止本次 Pass。`);
+          kickoff(next, receiverId, "越位重开：", passerId);
+          return next;
+        }
         responder.position = position;
         addLog(next, `${responder.label} 在传球响应中使用 ${SUIT_INFO[used.suit].name} 移动。`);
-      } else if (responseMove === "discard" && selected.length > 0) {
+        next.pass.responseStep = "discard";
+      } else if (next.pass.responseStep === "discard" && selected.length > 0) {
         const discarded: ActionCard[] = [];
         selected.forEach((id) => {
           const index = responder.hand.findIndex((card) => card.id === id && card.kind === "action");
@@ -595,16 +521,23 @@ export default function Home() {
         });
         if (discarded.length !== selected.length) return previous;
         next.discard.push(...discarded);
+        if (position === enemyGoal(responder.team) && hasBall(responder)) {
+          returnPassPayload(next);
+          const receivingTeam: Team = responder.team === "red" ? "blue" : "red";
+          const receiverId = nextOpponent(next, responder.id, receivingTeam);
+          addLog(next, `${responder.label} 在弃牌冲刺中试图带球进入球门，触发越位并终止本次 Pass。`);
+          kickoff(next, receiverId, "越位重开：", passerId);
+          return next;
+        }
         responder.position = position;
         addLog(next, `${responder.label} 弃掉 ${discarded.length} 张牌，冲刺到 ${squareName(position)}。`);
+        advanceResponse(next);
       } else {
         return previous;
       }
-      advanceResponse(next);
       return next;
     });
     setResponseIds([]);
-    setResponseMove(null);
   }
 
   function resolvePass(position: number) {
@@ -644,7 +577,7 @@ export default function Home() {
         }
         const receivingTeam: Team = scoringTeam === "red" ? "blue" : "red";
         const receiverId = nextOpponent(next, passer.id, receivingTeam);
-        kickoff(next, receiverId, "进球后开球：");
+        kickoff(next, receiverId, "进球后开球：", passer.id);
         return next;
       }
 
@@ -698,7 +631,15 @@ export default function Home() {
       if (player.hand.length <= handLimit(next, player)) {
         next.discardQueue.shift();
       }
-      if (next.discardQueue.length === 0) nextTurn(next);
+      if (next.discardQueue.length === 0) {
+        if (next.discardResume === "kickoff") {
+          next.phase = "kickoff";
+          next.discardResume = undefined;
+          addLog(next, "手牌已处理完毕，可以重新布阵并开球。");
+        } else {
+          nextTurn(next);
+        }
+      }
       return next;
     });
   }
@@ -720,15 +661,15 @@ export default function Home() {
       return;
     }
     if (game.phase === "turn" && actionMode === "move") {
-      useMove(position);
+      performMove(position);
       return;
     }
     if (game.phase === "turn" && actionMode === "tackle" && occupant) {
-      useTackle(occupant.id);
+      performTackle(occupant.id);
       return;
     }
-    if (game.phase === "pass-response" && responseMove) {
-      useResponseMove(position);
+    if (game.phase === "pass-response" && responseIds.length > 0) {
+      performResponseMove(position);
       return;
     }
     if (game.phase === "pass-target") resolvePass(position);
@@ -741,18 +682,23 @@ export default function Home() {
   }
 
   function toggleResponseCard(id: string) {
-    setResponseMove(null);
-    setResponseIds((currentIds) =>
-      currentIds.includes(id) ? currentIds.filter((item) => item !== id) : [...currentIds, id],
-    );
+    if (game.pass?.responseStep === "card") {
+      setResponseIds((currentIds) => (currentIds.includes(id) ? [] : [id]));
+    } else {
+      setResponseIds((currentIds) =>
+        currentIds.includes(id) ? currentIds.filter((item) => item !== id) : [...currentIds, id],
+      );
+    }
   }
 
   const phaseCopy = (() => {
     if (game.phase === "setup") return ["赛前布阵", "点击球员，再点击己方半场空格。双方都布置好后开始。"];
     if (game.phase === "kickoff") return [game.kickoffReason, "双方已回到默认阵型；你仍可调整各自在己方半场的位置。"];
     if (game.phase === "turn") return [`${current.label} 的回合`, "选择抽牌，或选择一张行动牌执行一个合法行动。"];
-    if (game.phase === "pass-response" && responderId)
-      return [`${playerById(game, responderId).label} 响应移动`, "使用一张牌按属性移动、弃若干牌横纵冲刺，或原地不动。"];
+    if (game.phase === "pass-response" && responderId && game.pass)
+      return game.pass.responseStep === "card"
+        ? [`${playerById(game, responderId).label} · 响应第 1 步`, "选择一张牌按属性移动，或跳过并进入弃牌冲刺。"]
+        : [`${playerById(game, responderId).label} · 响应第 2 步`, "可弃任意数量行动牌横纵冲刺相同步数，也可以直接完成响应。"];
     if (game.phase === "pass-target") return ["决定传球目标", "点击高亮的队友；若组合含足球，也可以点击高亮球门。"];
     if (game.phase === "intercept" && game.pass?.blockerId)
       return [`${playerById(game, game.pass.blockerId).label} 选择截获牌`, "整组牌已经揭开。选一张加入手牌，其余返回传球者。"];
@@ -855,7 +801,7 @@ export default function Home() {
             <p className="section-label">MATCH DIRECTOR</p>
             <h2>{phaseCopy[0]}</h2>
             <p>{phaseCopy[1]}</p>
-            <div className="phase-rule"><span>{game.phase === "pass-response" ? `${(game.pass?.responseIndex ?? 0) + 1} / 5` : "LIVE"}</span><i /></div>
+            <div className="phase-rule"><span>{game.phase === "pass-response" ? `${(game.pass?.responseIndex ?? 0) + 1}/5 · ${game.pass?.responseStep === "card" ? "1/2" : "2/2"}` : "LIVE"}</span><i /></div>
           </section>
 
           {(game.phase === "setup" || game.phase === "kickoff") && (
@@ -908,8 +854,16 @@ export default function Home() {
 
           {game.phase === "pass-response" && responderId && (
             <section className="action-card-panel">
-              <div className="panel-title-row"><h3>{playerById(game, responderId).label} 的选择</h3><span>响应移动</span></div>
-              <p className="action-hint">先选行动牌。单选可按牌移动；多选或单选可弃牌冲刺相同步数。</p>
+              <div className="panel-title-row"><h3>{playerById(game, responderId).label} 的选择</h3><span>{game.pass?.responseStep === "card" ? "步骤 1 / 按牌移动" : "步骤 2 / 弃牌冲刺"}</span></div>
+              <div className="response-step-tabs">
+                <span className={game.pass?.responseStep === "card" ? "active" : "done"}>1　按牌移动</span>
+                <span className={game.pass?.responseStep === "discard" ? "active" : ""}>2　弃牌冲刺</span>
+              </div>
+              <p className="action-hint">
+                {game.pass?.responseStep === "card"
+                  ? "选择一张行动牌后点击棋盘高亮位置；完成后仍可继续弃牌冲刺。"
+                  : "选择任意数量行动牌后点击棋盘高亮位置；移动步数等于弃牌数。"}
+              </p>
               <div className="mini-hand large">
                 {playerById(game, responderId).hand.filter((card) => card.kind === "action").map((card) => (
                   <button key={card.id} className={`action ${responseIds.includes(card.id) ? "selected" : ""}`} onClick={() => toggleResponseCard(card.id)}>
@@ -917,12 +871,17 @@ export default function Home() {
                   </button>
                 ))}
               </div>
-              <div className="response-actions">
-                <button disabled={responseIds.length !== 1} className={responseMove === "card" ? "active" : ""} onClick={() => setResponseMove("card")}>按牌移动</button>
-                <button disabled={responseIds.length === 0} className={responseMove === "discard" ? "active" : ""} onClick={() => setResponseMove("discard")}>弃 {responseIds.length || "—"} 张冲刺</button>
-                <button onClick={stayDuringPass}>原地不动</button>
+              <div className="response-actions two-step">
+                <span className={responseIds.length > 0 ? "ready" : ""}>
+                  {responseIds.length > 0
+                    ? game.pass?.responseStep === "card"
+                      ? "已选 1 张 · 点击高亮位置"
+                      : `已选 ${responseIds.length} 张 · 点击高亮位置`
+                    : "尚未选择行动牌"}
+                </span>
+                <button onClick={skipResponseStep}>{game.pass?.responseStep === "card" ? "跳过第 1 步" : "完成响应"}</button>
               </div>
-              {responseMove && <p className="action-hint accent">现在点击棋盘上的高亮空格。</p>}
+              {responseIds.length > 0 && <p className="action-hint accent">现在点击棋盘上的高亮空格完成本步骤。</p>}
             </section>
           )}
 
