@@ -5,6 +5,9 @@ import test from "node:test";
 const { BLUE_GOAL, movementTargets, passPath } = await import(
   new URL("../app/game-rules.ts", import.meta.url)
 );
+const { candidateProbabilities, weightedAiChoice } = await import(
+  new URL("../app/ai.ts", import.meta.url)
+);
 
 async function render() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
@@ -24,9 +27,9 @@ test("server-renders the PASS game shell", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>PASS — 足球卡牌策略原型<\/title>/i);
+  assert.match(html, /<title>PASS — 足球卡牌人机对战<\/title>/i);
   assert.match(html, /TACTICAL FOOTBALL CARD GAME/);
-  assert.match(html, /FIRST TO 3/);
+  assert.match(html, /FIRST TO (?:<!-- -->)?3/);
   assert.match(html, /8乘8足球棋盘/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
@@ -40,7 +43,7 @@ test("source keeps the reported rule regressions fixed", async () => {
   assert.match(rules, /const range = player\.team === game\.offense \? 3 : 7;/);
   assert.match(source, /responseStep: "card"/);
   assert.match(source, /next\.pass\.responseStep = "discard";/);
-  assert.match(source, /if \(passTargets\(next\)\.size === 0\)/);
+  assert.match(source, /if \(passTargets\(game\)\.size === 0\)/);
   assert.match(
     rules,
     /position === enemyGoal\(player\.team\) && playerHasBall\(player\)/,
@@ -75,4 +78,36 @@ test("knight passes expose the first orthogonal square for interception", () => 
   assert.deepEqual(passPath(35, 52, "knight"), [43]);
   assert.deepEqual(passPath(35, 45, "knight"), [36]);
   assert.equal(passPath(35, 53, "knight"), null);
+});
+
+test("AI choices remain random while favoring higher board value", () => {
+  const candidates = [
+    { value: "poor", score: -2, reason: "low value" },
+    { value: "safe", score: 2, reason: "medium value" },
+    { value: "strong", score: 7, reason: "high value" },
+  ];
+  const probabilities = candidateProbabilities(candidates, 2.2);
+
+  assert.equal(probabilities.length, 3);
+  assert.ok(probabilities[2] > probabilities[1]);
+  assert.ok(probabilities[1] > probabilities[0]);
+  assert.ok(Math.abs(probabilities.reduce((sum, value) => sum + value, 0) - 1) < 1e-10);
+  assert.equal(weightedAiChoice(candidates, 2.2, () => 0)?.value, "poor");
+  assert.equal(weightedAiChoice(candidates, 2.2, () => 0.999999)?.value, "strong");
+});
+
+test("AI automation covers every non-setup decision phase", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /if \(game\.phase === "turn"\) runAiTurn\(game\)/);
+  assert.match(source, /else if \(game\.phase === "pass-response"\) runAiResponse\(game\)/);
+  assert.match(source, /else if \(game\.phase === "pass-target"\) runAiPassTarget\(game, humanPlayerId\)/);
+  assert.match(source, /else if \(game\.phase === "intercept"\) runAiIntercept\(game\)/);
+  assert.match(source, /else if \(game\.phase === "discard"\) runAiDiscard\(game\)/);
+
+  const response = await render();
+  const html = await response.text();
+  assert.match(html, /1 HUMAN · 5 AI/);
+  assert.match(html, /选择本局由你控制的球员/);
+  assert.match(html, /收益越高，被选中的概率越大/);
 });
