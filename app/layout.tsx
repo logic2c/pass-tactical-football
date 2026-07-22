@@ -11,16 +11,16 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     metadataBase: base,
     title: "PASS — 足球卡牌人机对战",
-    description: "选择一名球员，与五名会根据局面收益加权决策的 AI 在 8×8 球场上对战。",
+    description: "连续出牌、特殊卡与落地球争夺：选择一名球员，与五名收益加权决策的 AI 在 8×8 球场上对战。",
     openGraph: {
       title: "PASS — Tactical Football Card Game",
-      description: "一名玩家与五名 AI：布阵、暗牌、拦截与三球决胜。",
+      description: "一名玩家与五名 AI：连续移动、特殊卡、落点传球与三球决胜。",
       images: [{ url: socialImage, width: 1731, height: 909, alt: "PASS 足球卡牌策略游戏" }],
     },
     twitter: {
       card: "summary_large_image",
       title: "PASS — Tactical Football Card Game",
-      description: "一名玩家与五名 AI：布阵、暗牌、拦截与三球决胜。",
+      description: "一名玩家与五名 AI：连续移动、特殊卡、落点传球与三球决胜。",
       images: [socialImage],
     },
   };

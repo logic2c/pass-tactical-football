@@ -10,6 +10,7 @@ type RulePlayer = {
 type RuleGame = {
   offense: RuleTeam;
   players: Array<{ position: number }>;
+  looseBall?: number;
 };
 
 export const RED_GOAL = 60;
@@ -37,7 +38,9 @@ export function movementTargets(game: RuleGame, player: RulePlayer, suit: RuleSu
     const position = nextRow * 8 + nextCol;
     if (occupied.has(position)) return;
     if (isGoal(position)) {
-      if (position === enemyGoal(player.team) && playerHasBall(player)) targets.add(position);
+      const collectsLooseBall =
+        game.looseBall !== undefined && movementPath(player.position, position, suit)?.includes(game.looseBall);
+      if (position === enemyGoal(player.team) && (playerHasBall(player) || collectsLooseBall)) targets.add(position);
       return;
     }
     targets.add(position);
@@ -131,4 +134,21 @@ export function passPath(from: number, to: number, suit: RuleSuit): number[] | n
     path.push((fromRow + rowStep * step) * 8 + fromCol + colStep * step);
   }
   return path;
+}
+
+/** All squares crossed by a move, including its destination. */
+export function movementPath(from: number, to: number, suit: RuleSuit): number[] | null {
+  const path = passPath(from, to, suit);
+  return path ? [...path, to] : null;
+}
+
+export function passBlockedByOpponent(
+  from: number,
+  to: number,
+  suit: RuleSuit,
+  passingTeam: RuleTeam,
+  players: Array<{ position: number; team: RuleTeam }>,
+) {
+  const path = passPath(from, to, suit);
+  return path ? path.some((cell) => players.some((player) => player.position === cell && player.team !== passingTeam)) : true;
 }
