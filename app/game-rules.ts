@@ -144,13 +144,12 @@ export function movementPath(from: number, to: number, suit: RuleSuit): number[]
   return path ? [...path, to] : null;
 }
 
-export function passBlockedByOpponent(
+export function passBlockedByPlayer(
   from: number,
   to: number,
   suit: RuleSuit,
-  passingTeam: RuleTeam,
-  players: Array<{ position: number; team: RuleTeam }>,
+  players: Array<{ position: number }>,
 ) {
   const path = passPath(from, to, suit);
-  return path ? path.some((cell) => players.some((player) => player.position === cell && player.team !== passingTeam)) : true;
+  return path ? path.some((cell) => players.some((player) => player.position === cell)) : true;
 }

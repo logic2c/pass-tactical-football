@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const { BLUE_GOAL, movementPath, movementTargets, passBlockedByOpponent, passPath } = await import(
+const { BLUE_GOAL, movementPath, movementTargets, passBlockedByPlayer, passPath } = await import(
   new URL("../app/game-rules.ts", import.meta.url)
 );
 const { candidateProbabilities, weightedAiChoice } = await import(
@@ -44,7 +44,8 @@ test("source implements staged turns, special cards, and end-of-turn discarding"
   assert.match(source, /drawInto\(game, player, GAME_BALANCE\.turnDraw\);/);
   assert.match(source, /game\.discardQueue = \[player\.id\];/);
   assert.match(source, /game\.turn\.actionsSpent !== 0/);
-  assert.match(source, /game\.turn\.actionsRemaining = 1;/);
+  assert.match(source, /function markBallAcquired\(game: GameState\)/);
+  assert.doesNotMatch(source, /game\.turn\.actionsRemaining = 1;/);
   assert.match(source, /game\.turn\.tackleUsed = true;/);
   assert.match(source, /game\.turn\.pressUsed = true;/);
   assert.match(source, /function countedHandSize\(player: Player\)/);
@@ -99,18 +100,20 @@ test("knight routes expose the first square and landing square for loose-ball pi
   assert.equal(passPath(35, 53, "knight"), null);
 });
 
-test("opponents block pass targets before the pass, while teammates do not", () => {
+test("teammates and opponents both block pass routes", () => {
   assert.equal(
-    passBlockedByOpponent(56, 0, "rock", "red", [
+    passBlockedByPlayer(56, 0, "rock", [
       { position: 48, team: "red" },
       { position: 40, team: "blue" },
     ]),
     true,
   );
   assert.equal(
-    passBlockedByOpponent(56, 0, "rock", "red", [{ position: 48, team: "red" }]),
-    false,
+    passBlockedByPlayer(56, 0, "rock", [{ position: 48, team: "red" }]),
+    true,
   );
+  assert.equal(passBlockedByPlayer(56, 48, "rock", [{ position: 48, team: "red" }]), false);
+  assert.equal(passBlockedByPlayer(35, 52, "knight", [{ position: 43, team: "red" }]), true);
 });
 
 test("AI choices remain random while favoring higher board value", () => {
@@ -138,10 +141,27 @@ test("AI automation covers multi-card turns and discarding without legacy pass p
   assert.match(source, /kind: "tackle"/);
   assert.match(source, /kind: "press"/);
   assert.match(source, /kind: "pass"/);
+  assert.match(source, /recipient\.hand\.push\(ball\)/);
+  assert.match(source, /firstPlayer\?\.team === passer\.team/);
+  assert.match(source, /className=\{`action-banner/);
+  assert.match(source, /aria-live=\{visibleEvent\?\.kind === "goal" \? "assertive" : "polite"\}/);
+  assert.match(source, /key=\{position\}/);
+  assert.doesNotMatch(source, /key=\{`\$\{position\}-\$\{visibleEvent/);
+  assert.match(source, /scoreGoal\(game, player, "移动", from, path\)/);
   assert.doesNotMatch(source, /pass-response|pass-target|intercept/);
 
   const response = await render();
   const html = await response.text();
   assert.match(html, /1 HUMAN · 5 AI/);
   assert.match(html, /选择本局由你控制的球员/);
+  assert.match(html, /等待第一步行动/);
+  assert.match(html, /aria-live="polite"/);
+  assert.match(html, /aria-atomic="true"/);
+});
+
+test("reduced-motion users retain static event highlights", async () => {
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.pitch-cell\.event-route/);
+  assert.match(css, /\.pitch-cell\.event-to \{ outline:/);
+  assert.match(css, /\.player-token\.event-actor \{ box-shadow:/);
 });

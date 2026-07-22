@@ -17,7 +17,7 @@ import {
   isGoal,
   movementPath,
   movementTargets,
-  passBlockedByOpponent,
+  passBlockedByPlayer,
   passPath,
 } from "./game-rules";
 
@@ -26,6 +26,21 @@ type Suit = "rock" | "bishop" | "knight";
 type SpecialKind = "tackle";
 type Phase = "setup" | "turn" | "discard" | "kickoff" | "gameover";
 type ActionMode = "move" | "pass" | "tackle" | "press" | null;
+type VisualEventKind = "move" | "pass" | "press" | "tackle" | "skip-draw" | "end" | "discard" | "goal" | "kickoff";
+type VisualEvent = {
+  id: number;
+  kind: VisualEventKind;
+  actorId?: string;
+  targetId?: string;
+  from?: number;
+  to?: number;
+  path?: number[];
+  label: string;
+  result: string;
+  tone?: "neutral" | "success" | "failure" | "goal";
+  ballSquare?: number;
+  team?: Team;
+};
 
 type ActionCard = { id: string; kind: "action"; suit: Suit };
 type SpecialCard = { id: string; kind: "special"; special: SpecialKind };
@@ -65,6 +80,8 @@ type GameState = {
   kickoffReason: string;
   winner?: Team;
   aiNote?: string;
+  eventSeq: number;
+  lastEvent?: VisualEvent;
 };
 
 const TURN_ORDER = ["r1", "b1", "r2", "b2", "r3", "b3"];
@@ -107,7 +124,7 @@ const AI_TUNING = {
   turnTemperature: 2.05,
   detailTemperature: 1.55,
   discardTemperature: 1.4,
-  thinkDelay: { turn: 620, phase: 420 },
+  thinkDelay: { turn: 980, phase: 480 },
 } as const;
 
 function shuffle<T>(items: T[]) {
@@ -157,6 +174,7 @@ function createGame(): GameState {
     discardQueue: [],
     log: ["选择你控制的球员并布阵，然后由 R1 开球。"],
     kickoffReason: "赛前布阵",
+    eventSeq: 0,
   };
   game.players.forEach((player) => drawInto(game, player, GAME_BALANCE.startingHand));
   game.players[0].hand.push({ id: "football", kind: "ball" });
@@ -214,8 +232,15 @@ function addLog(game: GameState, message: string) {
   game.log = game.log.slice(0, 32);
 }
 
-function describePlayCard(card: PlayCard) {
-  return card.kind === "action" ? SUIT_INFO[card.suit].name : SPECIAL_INFO[card.special].name;
+function emitEvent(game: GameState, event: Omit<VisualEvent, "id">) {
+  game.eventSeq += 1;
+  game.lastEvent = { id: game.eventSeq, ...event };
+}
+
+function remainingActionCopy(game: GameState) {
+  return game.turn.actionsRemaining > 0
+    ? `还可行动 ${game.turn.actionsRemaining} 次。`
+    : "本回合已不能继续行动。";
 }
 
 function drawInto(game: GameState, player: Player, count: number) {
@@ -310,16 +335,37 @@ function kickoff(game: GameState, receiverId: string, reason: string, endingPlay
   }
 }
 
-function scoreGoal(game: GameState, scorer: Player, method: "移动" | "传球") {
+function scoreGoal(
+  game: GameState,
+  scorer: Player,
+  method: "移动" | "传球",
+  origin = scorer.position,
+  route: number[] = [enemyGoal(scorer.team)],
+) {
+  const scorerId = scorer.id;
+  const goal = enemyGoal(scorer.team);
+  const scoringTeam = scorer.team;
   game.scores[scorer.team] += 1;
-  addLog(game, `${scorer.label} 通过${method}将足球送入 ${squareName(enemyGoal(scorer.team))}！${describeTeam(scorer.team)}得分。`);
+  addLog(game, `${scorer.label} 通过${method}将足球送入 ${squareName(goal)}！${describeTeam(scorer.team)}得分。`);
   if (game.scores[scorer.team] >= GAME_BALANCE.winningScore) {
     game.phase = "gameover";
     game.winner = scorer.team;
-    return;
+  } else {
+    const receiverId = nextOpponent(game, scorer.id, otherTeam(scorer.team));
+    kickoff(game, receiverId, "进球后开球：", scorer.id);
   }
-  const receiverId = nextOpponent(game, scorer.id, otherTeam(scorer.team));
-  kickoff(game, receiverId, "进球后开球：", scorer.id);
+  emitEvent(game, {
+    kind: "goal",
+    actorId: scorerId,
+    from: origin,
+    to: goal,
+    path: route,
+    ballSquare: goal,
+    label: `${scorerId.toUpperCase()} ${method}破门`,
+    result: `${describeTeam(scoringTeam)}得分，比分 ${game.scores.red} : ${game.scores.blue}。`,
+    tone: "goal",
+    team: scoringTeam,
+  });
 }
 
 function isOwnHalf(player: Player, position: number) {
@@ -338,8 +384,7 @@ function spendAction(game: GameState) {
   return true;
 }
 
-function gainBallAction(game: GameState) {
-  game.turn.actionsRemaining = 1;
+function markBallAcquired(game: GameState) {
   game.turn.acquiredBall = true;
 }
 
@@ -350,15 +395,27 @@ function isAdjacent(left: number, right: number) {
 }
 
 function legalPassTargets(game: GameState, passer: Player, suit: Suit) {
-  const occupied = new Set(game.players.map((player) => player.position));
   const targets = new Set<number>();
   for (let position = 0; position < 64; position += 1) {
-    if (position === passer.position || occupied.has(position)) continue;
+    if (position === passer.position) continue;
+    const occupant = game.players.find((player) => player.position === position);
+    if (occupant && occupant.team !== passer.team) continue;
     if (isGoal(position) && position !== enemyGoal(passer.team)) continue;
     const path = passPath(passer.position, position, suit);
     if (!path) continue;
-    const blocked = passBlockedByOpponent(passer.position, position, suit, passer.team, game.players);
+    const blocked = passBlockedByPlayer(passer.position, position, suit, game.players);
     if (!blocked) targets.add(position);
+  }
+
+  // Knight passes cross one orthogonal square first. A teammate on that square
+  // stops the route, but may receive the ball directly.
+  if (suit === "knight") {
+    for (let position = 0; position < 64; position += 1) {
+      const path = passPath(passer.position, position, suit);
+      if (!path?.length) continue;
+      const firstPlayer = game.players.find((player) => player.position === path[0]);
+      if (firstPlayer?.team === passer.team) targets.add(firstPlayer.position);
+    }
   }
   return targets;
 }
@@ -376,15 +433,33 @@ function resolveMoveAction(game: GameState, cardId: string, position: number) {
   player.position = position;
   addLog(game, `${player.label} 使用 ${SUIT_INFO[card.suit].name} 从 ${squareName(from)} 移动到 ${squareName(position)}。`);
 
+  let pickedUpAt: number | undefined;
   if (game.looseBall !== undefined && path.includes(game.looseBall)) {
     const ballSquare = game.looseBall;
+    pickedUpAt = ballSquare;
     game.looseBall = undefined;
     player.hand.push({ id: "football", kind: "ball" });
     game.offense = player.team;
-    gainBallAction(game);
+    markBallAcquired(game);
     addLog(game, `${player.label} 在移动途中经过 ${squareName(ballSquare)}，获得足球。`);
   }
-  if (position === enemyGoal(player.team) && hasBall(player)) scoreGoal(game, player, "移动");
+  if (position === enemyGoal(player.team) && hasBall(player)) {
+    scoreGoal(game, player, "移动", from, path);
+    return true;
+  }
+  emitEvent(game, {
+    kind: "move",
+    actorId: player.id,
+    from,
+    to: position,
+    path,
+    ballSquare: pickedUpAt,
+    label: `${player.label} 使用 ${SUIT_INFO[card.suit].name} 移动`,
+    result: pickedUpAt === undefined
+      ? `${squareName(from)} → ${squareName(position)}。${remainingActionCopy(game)}`
+      : `途经 ${squareName(pickedUpAt)} 获得足球。${remainingActionCopy(game)}`,
+    tone: pickedUpAt === undefined ? "neutral" : "success",
+  });
   return true;
 }
 
@@ -416,11 +491,24 @@ function resolveTackleAction(game: GameState, cardId: string, targetId: string) 
   player.hand.push(taken);
   if (taken.kind === "ball") {
     game.offense = player.team;
-    gainBallAction(game);
+    markBallAcquired(game);
     addLog(game, `${player.label} 使用抢断卡抽中 ${target.label} 的足球！${describeTeam(player.team)}转为进攻。`);
   } else {
-    addLog(game, `${player.label} 使用抢断卡，从 ${target.label} 手牌中抽到 ${describePlayCard(taken)}。`);
+    addLog(game, `${player.label} 使用抢断卡，从 ${target.label} 手牌中抢走 1 张未知牌。`);
   }
+  emitEvent(game, {
+    kind: "tackle",
+    actorId: player.id,
+    targetId: target.id,
+    from: player.position,
+    to: target.position,
+    path: [target.position],
+    label: `${player.label} 对 ${target.label} 使用 TACKLE`,
+    result: taken.kind === "ball"
+      ? `抢到足球，${describeTeam(player.team)}转为进攻。${remainingActionCopy(game)}`
+      : `抢走 1 张未知牌。${remainingActionCopy(game)}`,
+    tone: taken.kind === "ball" ? "success" : "neutral",
+  });
   return true;
 }
 
@@ -445,11 +533,24 @@ function resolvePressAction(game: GameState, targetId: string) {
     const [ball] = target.hand.splice(takenIndex, 1);
     player.hand.push(ball);
     game.offense = player.team;
-    gainBallAction(game);
-    addLog(game, `${player.label} 近身上抢 ${target.label} 并抽中足球！获得一次新的行动机会。`);
+    markBallAcquired(game);
+    addLog(game, `${player.label} 近身上抢 ${target.label} 并抽中足球！${remainingActionCopy(game)}`);
   } else {
     addLog(game, `${player.label} 近身上抢 ${target.label}，但抽中的牌不是足球，牌已放回。`);
   }
+  emitEvent(game, {
+    kind: "press",
+    actorId: player.id,
+    targetId: target.id,
+    from: player.position,
+    to: target.position,
+    path: [target.position],
+    label: `${player.label} 对 ${target.label} 发起上抢`,
+    result: inspected.kind === "ball"
+      ? `抽中足球，${describeTeam(player.team)}转为进攻。${remainingActionCopy(game)}`
+      : `抽中非足球牌，已原样放回。${remainingActionCopy(game)}`,
+    tone: inspected.kind === "ball" ? "success" : "failure",
+  });
   return true;
 }
 
@@ -460,18 +561,39 @@ function resolvePassAction(game: GameState, cardId: string, position: number) {
   if (cardIndex < 0) return false;
   const card = passer.hand[cardIndex] as ActionCard;
   if (!legalPassTargets(game, passer, card.suit).has(position)) return false;
+  const recipient = game.players.find((player) => player.position === position && player.team === passer.team);
+  const from = passer.position;
+  const path = passPath(from, position, card.suit) ?? [position];
   const [used] = passer.hand.splice(cardIndex, 1) as ActionCard[];
   const ballIndex = passer.hand.findIndex((item) => item.kind === "ball");
   if (ballIndex < 0) return false;
-  passer.hand.splice(ballIndex, 1);
+  const [ball] = passer.hand.splice(ballIndex, 1) as BallCard[];
   if (!spendAction(game)) return false;
   game.discard.push(used);
   if (position === enemyGoal(passer.team)) {
-    scoreGoal(game, passer, "传球");
+    scoreGoal(game, passer, "传球", from, [...path, position]);
     return true;
   }
-  game.looseBall = position;
-  addLog(game, `${passer.label} 使用 ${SUIT_INFO[used.suit].name} 将足球传到 ${squareName(position)}；足球现在无人持有。`);
+  if (recipient) {
+    recipient.hand.push(ball);
+    game.looseBall = undefined;
+    addLog(game, `${passer.label} 使用 ${SUIT_INFO[used.suit].name} 将足球直接传给 ${recipient.label}。`);
+  } else {
+    game.looseBall = position;
+    addLog(game, `${passer.label} 使用 ${SUIT_INFO[used.suit].name} 将足球传到 ${squareName(position)}；足球现在无人持有。`);
+  }
+  emitEvent(game, {
+    kind: "pass",
+    actorId: passer.id,
+    targetId: recipient?.id,
+    from,
+    to: position,
+    path: [...path, position].filter((cell, index, cells) => cells.indexOf(cell) === index),
+    ballSquare: position,
+    label: `${passer.label} 使用 ${SUIT_INFO[used.suit].name} 传球`,
+    result: recipient ? `${recipient.label} 直接接到足球。` : `足球落在 ${squareName(position)}，等待球员经过。`,
+    tone: recipient ? "success" : "neutral",
+  });
   finishPlayPhase(game);
   return true;
 }
@@ -484,7 +606,14 @@ function discardOverflowAction(game: GameState, cardId: string) {
   if (index < 0) return false;
   const [card] = player.hand.splice(index, 1) as PlayCard[];
   game.discard.push(card);
-  addLog(game, `${player.label} 弃掉一张 ${describePlayCard(card)}。`);
+  addLog(game, `${player.label} 弃掉 1 张牌。`);
+  emitEvent(game, {
+    kind: "discard",
+    actorId: player.id,
+    label: `${player.label} 弃置手牌`,
+    result: "弃掉 1 张牌。",
+    tone: "neutral",
+  });
   if (countedHandSize(player) <= handLimit(game, player)) game.discardQueue.shift();
   if (game.discardQueue.length === 0) {
     if (game.discardResume === "kickoff") {
@@ -526,6 +655,13 @@ function scoreMove(game: GameState, player: Player, position: number, card: Acti
 
 function scorePassTarget(game: GameState, passer: Player, position: number, card: ActionCard) {
   if (position === enemyGoal(passer.team)) return 38 - cardPreservationPenalty(passer, card);
+  const recipient = game.players.find((player) => player.position === position && player.team === passer.team);
+  if (recipient) {
+    const progress = progressGain(passer.team, passer.position, recipient.position);
+    const opponents = game.players.filter((player) => player.team !== passer.team).map((player) => player.position);
+    const safety = Math.min(3, closestDistance(recipient.position, opponents));
+    return 10 + progress * 1.5 + safety * 0.6 - cardPreservationPenalty(passer, card);
+  }
   const teammates = game.players.filter((player) => player.team === passer.team && player.id !== passer.id);
   const opponents = game.players.filter((player) => player.team !== passer.team);
   const ownDistance = Math.min(...teammates.map((player) => gridDistance(player.position, position)));
@@ -630,7 +766,9 @@ function runAiTurn(game: GameState) {
           score: scorePassTarget(game, player, position, card),
           reason: position === enemyGoal(player.team)
             ? "线路无防守者阻挡，直接射门"
-            : `把足球送到 ${squareName(position)}，争取下一次移动先拿到球`,
+            : game.players.some((target) => target.position === position && target.team === player.team)
+              ? `直接传给 ${game.players.find((target) => target.position === position)?.label}`
+              : `把足球送到 ${squareName(position)}，争取下一次移动先拿到球`,
         });
       });
     });
@@ -646,8 +784,22 @@ function runAiTurn(game: GameState) {
   if (plan.kind === "skip-draw") {
     drawInto(game, player, GAME_BALANCE.skipPlayDraw);
     addLog(game, `${player.label} 跳过出牌阶段，额外抽取 ${GAME_BALANCE.skipPlayDraw} 张牌。`);
+    emitEvent(game, {
+      kind: "skip-draw",
+      actorId: player.id,
+      label: `${player.label} 选择蓄力`,
+      result: `跳过出牌阶段，额外抽取 ${GAME_BALANCE.skipPlayDraw} 张未知牌。`,
+      tone: "neutral",
+    });
     finishPlayPhase(game);
   } else if (plan.kind === "end") {
+    emitEvent(game, {
+      kind: "end",
+      actorId: player.id,
+      label: `${player.label} 结束出牌`,
+      result: "未再进行行动，进入弃牌阶段。",
+      tone: "neutral",
+    });
     finishPlayPhase(game);
   } else if (plan.kind === "move") {
     if (!resolveMoveAction(game, plan.cardId, plan.position)) finishPlayPhase(game);
@@ -664,6 +816,7 @@ function runAiDiscard(game: GameState) {
   const playerId = game.discardQueue[0];
   if (!playerId) return;
   const player = playerById(game, playerId);
+  const before = countedHandSize(player);
   let safety = 16;
   while (countedHandSize(player) > handLimit(game, player) && safety > 0) {
     safety -= 1;
@@ -679,8 +832,17 @@ function runAiDiscard(game: GameState) {
     }));
     const choice = weightedAiChoice(options, AI_TUNING.discardTemperature);
     if (!choice) break;
-    logAiSelection(game, player, choice, "弃牌阶段");
     discardOverflowAction(game, choice.value);
+  }
+  const discarded = before - countedHandSize(player);
+  if (discarded > 0) {
+    emitEvent(game, {
+      kind: "discard",
+      actorId: player.id,
+      label: `${player.label} 整理手牌`,
+      result: `弃置 ${discarded} 张未知牌，手牌已降至上限。`,
+      tone: "neutral",
+    });
   }
 }
 
@@ -724,6 +886,8 @@ export default function Home() {
     if (actionMode === "pass" && hasBall(current) && canAct(game)) return legalPassTargets(game, current, selectedCard.suit);
     return new Set<number>();
   })();
+  const visibleEvent = game.lastEvent;
+  const eventPath = new Set(visibleEvent?.path ?? []);
 
   useEffect(() => {
     if (!actorId || actorId === humanPlayerId) return;
@@ -748,6 +912,16 @@ export default function Home() {
     setGame((previous) => {
       const next = structuredClone(previous);
       enterCurrentTurn(next);
+      const starter = activePlayer(next);
+      emitEvent(next, {
+        kind: "kickoff",
+        actorId: starter.id,
+        to: starter.position,
+        ballSquare: starter.position,
+        label: `${starter.label} 开球`,
+        result: `${describeTeam(starter.team)}获得球权，比赛继续。`,
+        tone: "success",
+      });
       return next;
     });
     clearSelections();
@@ -776,6 +950,13 @@ export default function Home() {
       const player = activePlayer(next);
       drawInto(next, player, GAME_BALANCE.skipPlayDraw);
       addLog(next, `${player.label} 跳过出牌阶段，额外抽取 ${GAME_BALANCE.skipPlayDraw} 张牌。`);
+      emitEvent(next, {
+        kind: "skip-draw",
+        actorId: player.id,
+        label: `${player.label} 选择蓄力`,
+        result: `跳过出牌阶段，额外抽取 ${GAME_BALANCE.skipPlayDraw} 张牌。`,
+        tone: "neutral",
+      });
       finishPlayPhase(next);
       return next;
     });
@@ -786,6 +967,14 @@ export default function Home() {
     if (!humanTurn) return;
     setGame((previous) => {
       const next = structuredClone(previous);
+      const player = activePlayer(next);
+      emitEvent(next, {
+        kind: "end",
+        actorId: player.id,
+        label: `${player.label} 结束出牌`,
+        result: "进入弃牌阶段。",
+        tone: "neutral",
+      });
       finishPlayPhase(next);
       return next;
     });
@@ -862,12 +1051,12 @@ export default function Home() {
     if (game.phase === "turn") {
       const restriction = hasBall(current)
         ? game.turn.acquiredBall
-          ? "刚刚获得足球，剩余行动已重置为1。"
+          ? `刚刚获得足球，仍剩 ${game.turn.actionsRemaining} 次行动。`
           : "持球者本回合拥有1次行动。"
         : "无球队员本回合拥有2次行动。";
       return current.id === humanPlayerId
         ? [`${current.label} · 出牌阶段`, `已自动抽1张。${restriction}`]
-        : [`${current.label} · AI 出牌阶段`, `AI 正在评估剩余 ${game.turn.actionsRemaining} 次行动。`];
+        : [`${current.label} · AI 出牌阶段`, `已自动抽 1 张未知牌；AI 正在评估剩余 ${game.turn.actionsRemaining} 次行动。`];
     }
     if (game.phase === "discard" && game.discardQueue[0]) {
       const player = playerById(game, game.discardQueue[0]);
@@ -907,6 +1096,18 @@ export default function Home() {
 
       <div className="game-layout">
         <section className="pitch-panel">
+          <section
+            className={`action-banner ${visibleEvent?.tone ?? "neutral"} ${visibleEvent?.team ?? ""}`}
+            role={visibleEvent?.kind === "goal" ? "alert" : "status"}
+            aria-live={visibleEvent?.kind === "goal" ? "assertive" : "polite"}
+            aria-atomic="true"
+          >
+            <span>{visibleEvent ? visibleEvent.kind.replace("-", " ").toUpperCase() : "MATCH FEED"}</span>
+            <div>
+              <strong>{visibleEvent?.label ?? "等待第一步行动"}</strong>
+              <p>{visibleEvent?.result ?? "AI 和玩家的移动、传球、上抢与球权变化会显示在这里。"}</p>
+            </div>
+          </section>
           <div className="pitch-frame">
             <div className="pitch" role="grid" aria-label="8乘8足球棋盘">
               <div className="center-circle" aria-hidden="true" /><div className="halfway-line" aria-hidden="true" />
@@ -916,9 +1117,12 @@ export default function Home() {
                 const valid = validCells.has(position);
                 const setupSelected = player?.id === setupPlayerId && (game.phase === "setup" || game.phase === "kickoff");
                 const closeInteractionTarget = humanTurn && (actionMode === "tackle" || actionMode === "press") && player && player.team !== current.team && player.hand.length > 0 && isAdjacent(current.position, player.position);
+                const eventFrom = visibleEvent?.from === position;
+                const eventTo = visibleEvent?.to === position || visibleEvent?.ballSquare === position;
+                const eventRoute = eventPath.has(position);
                 return <button
                   key={position}
-                  className={`pitch-cell ${(Math.floor(position / 8) + position) % 2 ? "stripe" : ""} ${valid ? "valid" : ""} ${goal ? `goal ${goal}` : ""} ${closeInteractionTarget ? "tackle-target" : ""}`}
+                  className={`pitch-cell ${(Math.floor(position / 8) + position) % 2 ? "stripe" : ""} ${valid ? "valid" : ""} ${goal ? `goal ${goal}` : ""} ${closeInteractionTarget ? "tackle-target" : ""} ${eventRoute ? "event-route" : ""} ${eventFrom ? "event-from" : ""} ${eventTo ? "event-to" : ""}`}
                   onClick={() => handleCell(position)}
                   aria-label={`${squareName(position)}${player ? `，${player.label}` : ""}${game.looseBall === position ? "，足球落点" : ""}`}
                   role="gridcell"
@@ -926,7 +1130,7 @@ export default function Home() {
                   <span className="coordinate">{squareName(position)}</span>
                   {goal && <span className="goal-net"><i /><i /><i /></span>}
                   {game.looseBall === position && <span className="loose-ball" title="无人持有的足球">●</span>}
-                  {player && <span className={`player-token ${player.team} ${setupSelected ? "selected" : ""} ${player.id === current.id ? "current" : ""}`}>
+                  {player && <span className={`player-token ${player.team} ${setupSelected ? "selected" : ""} ${player.id === current.id ? "current" : ""} ${player.id === visibleEvent?.actorId && visibleEvent?.kind !== "goal" ? "event-actor" : ""} ${player.id === visibleEvent?.targetId ? "event-target" : ""}`}>
                     <span className="jersey">{player.label.slice(1)}</span><strong>{player.label}</strong><small>{player.hand.length} 手牌</small>
                     {hasBall(player) && <span className="ball" title="公开持球者">●</span>}
                   </span>}
@@ -962,7 +1166,7 @@ export default function Home() {
             {current.team !== game.offense && <div className="mode-grid"><button disabled={!canAct(game) || game.turn.pressUsed} className={actionMode === "press" ? "active" : ""} onClick={() => { setSelectedCardId(null); setActionMode("press"); }}>PRESS<small>近身无卡上抢</small></button></div>}
             {selectedCard?.kind === "special" && <div className="mode-grid"><button disabled={!canAct(game) || current.team === game.offense || game.turn.tackleUsed} className={actionMode === "tackle" ? "active" : ""} onClick={() => setActionMode("tackle")}>TACKLE<small>近身抢牌 · 最多一次</small></button></div>}
             {actionMode === "move" && <p className="action-hint">点击高亮位置。移动路径经过落地足球时会立即获得足球。</p>}
-            {actionMode === "pass" && <p className="action-hint">点击高亮空格传球；有对方球员挡在线路中间的格子不可选择。</p>}
+            {actionMode === "pass" && <p className="action-hint">点击高亮空格或队友传球；任何球员都会阻挡线路，最先挡路的队友可以直接接球。</p>}
             {actionMode === "tackle" && <p className="action-hint">点击王的一格以内的对手；抽到的牌都会加入手牌。</p>}
             {actionMode === "press" && <p className="action-hint">点击王的一格以内的对手；只有抽中足球才会拿走，否则原样放回。</p>}
           </section>}
