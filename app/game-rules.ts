@@ -37,6 +37,8 @@ export function movementTargets(game: RuleGame, player: RulePlayer, suit: RuleSu
     if (nextRow < 0 || nextRow > 7 || nextCol < 0 || nextCol > 7) return;
     const position = nextRow * 8 + nextCol;
     if (occupied.has(position)) return;
+    const route = movementPath(player.position, position, suit);
+    if (!route || route.slice(0, -1).some((cell) => occupied.has(cell))) return;
     if (isGoal(position)) {
       const collectsLooseBall =
         game.looseBall !== undefined && movementPath(player.position, position, suit)?.includes(game.looseBall);
@@ -72,7 +74,7 @@ export function movementTargets(game: RuleGame, player: RulePlayer, suit: RuleSu
             [1, -1],
             [1, 1],
           ];
-    const range = player.team === game.offense ? 3 : 7;
+    const range = 3;
     directions.forEach(([rowDelta, colDelta]) => {
       for (let distance = 1; distance <= range; distance += 1) {
         add(row + rowDelta * distance, col + colDelta * distance);

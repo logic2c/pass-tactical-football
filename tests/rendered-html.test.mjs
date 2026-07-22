@@ -39,12 +39,16 @@ test("source implements staged turns, special cards, and end-of-turn discarding"
   const rules = await readFile(new URL("../app/game-rules.ts", import.meta.url), "utf8");
 
   assert.match(source, /specialCards: \{ tackle: 6 \}/);
+  assert.match(source, /turnDraw: 1/);
+  assert.match(source, /actionPoints: \{ holder: 1, other: 2 \}/);
   assert.match(source, /drawInto\(game, player, GAME_BALANCE\.turnDraw\);/);
   assert.match(source, /game\.discardQueue = \[player\.id\];/);
-  assert.match(source, /game\.turn\.cardsPlayed !== 0/);
-  assert.match(source, /if \(game\.turn\.acquiredBall\) return false;/);
+  assert.match(source, /game\.turn\.actionsSpent !== 0/);
+  assert.match(source, /game\.turn\.actionsRemaining = 1;/);
   assert.match(source, /game\.turn\.tackleUsed = true;/);
-  assert.match(rules, /const range = player\.team === game\.offense \? 3 : 7;/);
+  assert.match(source, /game\.turn\.pressUsed = true;/);
+  assert.match(source, /function countedHandSize\(player: Player\)/);
+  assert.match(rules, /const range = 3;/);
   assert.doesNotMatch(source, /pass-response|runAiResponse|takeInterceptCard|越位/);
 });
 
@@ -53,10 +57,12 @@ test("movement ranges and goal access follow the current rules", () => {
   const defenseGame = { offense: "blue", players: [defender] };
   const offenseGame = { offense: "red", players: [defender] };
 
-  assert.equal(movementTargets(defenseGame, defender, "rock").has(39), true);
-  assert.equal(movementTargets(offenseGame, defender, "rock").has(39), false);
-  assert.equal(movementTargets(defenseGame, defender, "bishop").has(7), true);
-  assert.equal(movementTargets(offenseGame, defender, "bishop").has(7), false);
+  assert.equal(movementTargets(defenseGame, defender, "rock").has(38), true);
+  assert.equal(movementTargets(offenseGame, defender, "rock").has(38), true);
+  assert.equal(movementTargets(defenseGame, defender, "rock").has(39), false);
+  assert.equal(movementTargets(defenseGame, defender, "bishop").has(14), true);
+  assert.equal(movementTargets(offenseGame, defender, "bishop").has(14), true);
+  assert.equal(movementTargets(defenseGame, defender, "bishop").has(7), false);
 
   const farBallCarrier = { team: "red", position: 56, hand: [{ kind: "ball" }] };
   const farGame = { offense: "red", players: [farBallCarrier] };
@@ -72,6 +78,18 @@ test("movement ranges and goal access follow the current rules", () => {
 
   const looseBallGame = { offense: "red", looseBall: 18, players: [alignedWithoutBall] };
   assert.equal(movementTargets(looseBallGame, alignedWithoutBall, "bishop").has(BLUE_GOAL), true);
+});
+
+test("teammates and opponents both block movement routes", () => {
+  const mover = { team: "red", position: 56, hand: [{ kind: "action" }] };
+  const teammateBlock = { team: "red", position: 48, hand: [] };
+  const opponentBlock = { team: "blue", position: 48, hand: [] };
+  assert.equal(movementTargets({ offense: "red", players: [mover, teammateBlock] }, mover, "rock").has(32), false);
+  assert.equal(movementTargets({ offense: "red", players: [mover, opponentBlock] }, mover, "rock").has(32), false);
+
+  const knight = { team: "red", position: 35, hand: [{ kind: "action" }] };
+  const knightBlock = { team: "blue", position: 43, hand: [] };
+  assert.equal(movementTargets({ offense: "red", players: [knight, knightBlock] }, knight, "knight").has(52), false);
 });
 
 test("knight routes expose the first square and landing square for loose-ball pickup", () => {
@@ -118,6 +136,7 @@ test("AI automation covers multi-card turns and discarding without legacy pass p
   assert.match(source, /else if \(game\.phase === "discard"\) runAiDiscard\(game\)/);
   assert.match(source, /kind: "skip-draw"/);
   assert.match(source, /kind: "tackle"/);
+  assert.match(source, /kind: "press"/);
   assert.match(source, /kind: "pass"/);
   assert.doesNotMatch(source, /pass-response|pass-target|intercept/);
 

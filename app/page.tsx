@@ -25,7 +25,7 @@ type Team = "red" | "blue";
 type Suit = "rock" | "bishop" | "knight";
 type SpecialKind = "tackle";
 type Phase = "setup" | "turn" | "discard" | "kickoff" | "gameover";
-type ActionMode = "move" | "pass" | "tackle" | null;
+type ActionMode = "move" | "pass" | "tackle" | "press" | null;
 
 type ActionCard = { id: string; kind: "action"; suit: Suit };
 type SpecialCard = { id: string; kind: "special"; special: SpecialKind };
@@ -42,9 +42,10 @@ type Player = {
 };
 
 type TurnState = {
-  cardsPlayed: number;
+  actionsRemaining: number;
+  actionsSpent: number;
   tackleUsed: boolean;
-  startedWithBall: boolean;
+  pressUsed: boolean;
   acquiredBall: boolean;
 };
 
@@ -66,7 +67,7 @@ type GameState = {
   aiNote?: string;
 };
 
-const TURN_ORDER = ["r1", "b1", "b2", "r2", "r3", "b3"];
+const TURN_ORDER = ["r1", "b1", "r2", "b2", "r3", "b3"];
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"];
 
 const SUIT_INFO: Record<Suit, { name: string; icon: string; caption: string }> = {
@@ -93,12 +94,13 @@ const GAME_BALANCE = {
   actionCardsPerSuit: 20,
   specialCards: { tackle: 6 },
   startingHand: 3,
-  turnDraw: 2,
+  turnDraw: 1,
   skipPlayDraw: 2,
   handLimit: { offense: 5, defense: 6 },
   winningScore: 3,
   maxTacklesPerTurn: 1,
-  maxCardsBeforePassForHolder: 1,
+  maxPressesPerTurn: 1,
+  actionPoints: { holder: 1, other: 2 },
 } as const;
 
 const AI_TUNING = {
@@ -133,7 +135,7 @@ function buildDeck(): PlayCard[] {
 }
 
 function emptyTurn(): TurnState {
-  return { cardsPlayed: 0, tackleUsed: false, startedWithBall: false, acquiredBall: false };
+  return { actionsRemaining: 0, actionsSpent: 0, tackleUsed: false, pressUsed: false, acquiredBall: false };
 }
 
 function createGame(): GameState {
@@ -195,6 +197,10 @@ function handLimit(game: GameState, player: Player) {
   return player.team === game.offense ? GAME_BALANCE.handLimit.offense : GAME_BALANCE.handLimit.defense;
 }
 
+function countedHandSize(player: Player) {
+  return player.hand.filter((card) => card.kind !== "ball").length;
+}
+
 function describeTeam(team: Team) {
   return team === "red" ? "红队" : "蓝队";
 }
@@ -231,9 +237,10 @@ function enterCurrentTurn(game: GameState) {
   game.discardQueue = [];
   game.discardResume = undefined;
   game.turn = {
-    cardsPlayed: 0,
+    actionsRemaining: hasBall(player) ? GAME_BALANCE.actionPoints.holder : GAME_BALANCE.actionPoints.other,
+    actionsSpent: 0,
     tackleUsed: false,
-    startedWithBall: hasBall(player),
+    pressUsed: false,
     acquiredBall: false,
   };
   drawInto(game, player, GAME_BALANCE.turnDraw);
@@ -247,7 +254,7 @@ function nextTurn(game: GameState) {
 
 function finishPlayPhase(game: GameState) {
   const player = activePlayer(game);
-  if (player.hand.length > handLimit(game, player)) {
+  if (countedHandSize(player) > handLimit(game, player)) {
     game.phase = "discard";
     game.discardQueue = [player.id];
     game.discardResume = "next-turn";
@@ -294,7 +301,7 @@ function kickoff(game: GameState, receiverId: string, reason: string, endingPlay
   addLog(game, `${reason} ${playerById(game, receiverId).label} 获得球权，双方重新布阵。`);
 
   const endingPlayer = endingPlayerId ? playerById(game, endingPlayerId) : undefined;
-  if (endingPlayer && endingPlayer.hand.length > handLimit(game, endingPlayer)) {
+  if (endingPlayer && countedHandSize(endingPlayer) > handLimit(game, endingPlayer)) {
     game.phase = "discard";
     game.discardQueue = [endingPlayer.id];
     game.discardResume = "kickoff";
@@ -320,11 +327,26 @@ function isOwnHalf(player: Player, position: number) {
   return player.team === "red" ? row >= 4 : row <= 3;
 }
 
-function canPlayBeforePass(game: GameState, player: Player) {
-  if (!hasBall(player)) return true;
-  if (game.turn.acquiredBall) return false;
-  if (!game.turn.startedWithBall) return false;
-  return game.turn.cardsPlayed < GAME_BALANCE.maxCardsBeforePassForHolder;
+function canAct(game: GameState) {
+  return game.turn.actionsRemaining > 0;
+}
+
+function spendAction(game: GameState) {
+  if (!canAct(game)) return false;
+  game.turn.actionsRemaining -= 1;
+  game.turn.actionsSpent += 1;
+  return true;
+}
+
+function gainBallAction(game: GameState) {
+  game.turn.actionsRemaining = 1;
+  game.turn.acquiredBall = true;
+}
+
+function isAdjacent(left: number, right: number) {
+  const rowDistance = Math.abs(Math.floor(left / 8) - Math.floor(right / 8));
+  const colDistance = Math.abs((left % 8) - (right % 8));
+  return Math.max(rowDistance, colDistance) === 1;
 }
 
 function legalPassTargets(game: GameState, passer: Player, suit: Suit) {
@@ -343,14 +365,14 @@ function legalPassTargets(game: GameState, passer: Player, suit: Suit) {
 
 function resolveMoveAction(game: GameState, cardId: string, position: number) {
   const player = activePlayer(game);
-  if (!canPlayBeforePass(game, player)) return false;
+  if (!canAct(game)) return false;
   const cardIndex = player.hand.findIndex((card) => card.id === cardId && card.kind === "action");
   if (cardIndex < 0 || !movementTargets(game, player, (player.hand[cardIndex] as ActionCard).suit).has(position)) return false;
   const [card] = player.hand.splice(cardIndex, 1) as ActionCard[];
   const from = player.position;
   const path = movementPath(from, position, card.suit) ?? [position];
+  if (!spendAction(game)) return false;
   game.discard.push(card);
-  game.turn.cardsPlayed += 1;
   player.position = position;
   addLog(game, `${player.label} 使用 ${SUIT_INFO[card.suit].name} 从 ${squareName(from)} 移动到 ${squareName(position)}。`);
 
@@ -359,7 +381,7 @@ function resolveMoveAction(game: GameState, cardId: string, position: number) {
     game.looseBall = undefined;
     player.hand.push({ id: "football", kind: "ball" });
     game.offense = player.team;
-    game.turn.acquiredBall = true;
+    gainBallAction(game);
     addLog(game, `${player.label} 在移动途中经过 ${squareName(ballSquare)}，获得足球。`);
   }
   if (position === enemyGoal(player.team) && hasBall(player)) scoreGoal(game, player, "移动");
@@ -369,7 +391,7 @@ function resolveMoveAction(game: GameState, cardId: string, position: number) {
 function resolveTackleAction(game: GameState, cardId: string, targetId: string) {
   const player = activePlayer(game);
   if (
-    !canPlayBeforePass(game, player) ||
+    !canAct(game) ||
     player.team === game.offense ||
     game.turn.tackleUsed ||
     GAME_BALANCE.maxTacklesPerTurn < 1
@@ -378,17 +400,23 @@ function resolveTackleAction(game: GameState, cardId: string, targetId: string) 
     (card) => card.id === cardId && card.kind === "special" && card.special === "tackle",
   );
   const target = game.players.find((item) => item.id === targetId);
-  if (cardIndex < 0 || !target || target.team === player.team || target.hand.length === 0) return false;
+  if (
+    cardIndex < 0 ||
+    !target ||
+    target.team === player.team ||
+    target.hand.length === 0 ||
+    !isAdjacent(player.position, target.position)
+  ) return false;
+  if (!spendAction(game)) return false;
   const [card] = player.hand.splice(cardIndex, 1) as SpecialCard[];
   game.discard.push(card);
-  game.turn.cardsPlayed += 1;
   game.turn.tackleUsed = true;
   const takenIndex = Math.floor(Math.random() * target.hand.length);
   const [taken] = target.hand.splice(takenIndex, 1);
   player.hand.push(taken);
   if (taken.kind === "ball") {
     game.offense = player.team;
-    game.turn.acquiredBall = true;
+    gainBallAction(game);
     addLog(game, `${player.label} 使用抢断卡抽中 ${target.label} 的足球！${describeTeam(player.team)}转为进攻。`);
   } else {
     addLog(game, `${player.label} 使用抢断卡，从 ${target.label} 手牌中抽到 ${describePlayCard(taken)}。`);
@@ -396,9 +424,38 @@ function resolveTackleAction(game: GameState, cardId: string, targetId: string) 
   return true;
 }
 
+function resolvePressAction(game: GameState, targetId: string) {
+  const player = activePlayer(game);
+  const target = game.players.find((item) => item.id === targetId);
+  if (
+    !canAct(game) ||
+    player.team === game.offense ||
+    game.turn.pressUsed ||
+    GAME_BALANCE.maxPressesPerTurn < 1 ||
+    !target ||
+    target.team === player.team ||
+    target.hand.length === 0 ||
+    !isAdjacent(player.position, target.position)
+  ) return false;
+  if (!spendAction(game)) return false;
+  game.turn.pressUsed = true;
+  const takenIndex = Math.floor(Math.random() * target.hand.length);
+  const inspected = target.hand[takenIndex];
+  if (inspected.kind === "ball") {
+    const [ball] = target.hand.splice(takenIndex, 1);
+    player.hand.push(ball);
+    game.offense = player.team;
+    gainBallAction(game);
+    addLog(game, `${player.label} 近身上抢 ${target.label} 并抽中足球！获得一次新的行动机会。`);
+  } else {
+    addLog(game, `${player.label} 近身上抢 ${target.label}，但抽中的牌不是足球，牌已放回。`);
+  }
+  return true;
+}
+
 function resolvePassAction(game: GameState, cardId: string, position: number) {
   const passer = activePlayer(game);
-  if (!hasBall(passer)) return false;
+  if (!hasBall(passer) || !canAct(game)) return false;
   const cardIndex = passer.hand.findIndex((card) => card.id === cardId && card.kind === "action");
   if (cardIndex < 0) return false;
   const card = passer.hand[cardIndex] as ActionCard;
@@ -407,8 +464,8 @@ function resolvePassAction(game: GameState, cardId: string, position: number) {
   const ballIndex = passer.hand.findIndex((item) => item.kind === "ball");
   if (ballIndex < 0) return false;
   passer.hand.splice(ballIndex, 1);
+  if (!spendAction(game)) return false;
   game.discard.push(used);
-  game.turn.cardsPlayed += 1;
   if (position === enemyGoal(passer.team)) {
     scoreGoal(game, passer, "传球");
     return true;
@@ -428,7 +485,7 @@ function discardOverflowAction(game: GameState, cardId: string) {
   const [card] = player.hand.splice(index, 1) as PlayCard[];
   game.discard.push(card);
   addLog(game, `${player.label} 弃掉一张 ${describePlayCard(card)}。`);
-  if (player.hand.length <= handLimit(game, player)) game.discardQueue.shift();
+  if (countedHandSize(player) <= handLimit(game, player)) game.discardQueue.shift();
   if (game.discardQueue.length === 0) {
     if (game.discardResume === "kickoff") {
       game.phase = "kickoff";
@@ -482,6 +539,7 @@ type AiTurnPlan =
   | { kind: "end" }
   | { kind: "move"; cardId: string; position: number }
   | { kind: "tackle"; cardId: string; targetId: string }
+  | { kind: "press"; targetId: string }
   | { kind: "pass"; cardId: string; position: number };
 
 function logAiSelection<T>(game: GameState, player: Player, selection: AiSelection<T>, label: string) {
@@ -495,22 +553,21 @@ function runAiTurn(game: GameState) {
   const player = activePlayer(game);
   const actions = actionCards(player);
   const choices: AiCandidate<AiTurnPlan>[] = [];
-  const mustStopOrPass = hasBall(player) && !canPlayBeforePass(game, player);
   const hasPass = hasBall(player) && actions.some((card) => legalPassTargets(game, player, card.suit).size > 0);
   choices.push({
     value: { kind: "end" },
-    score: mustStopOrPass && !hasPass ? 9 : game.turn.cardsPlayed >= 2 ? 4.8 : hasBall(player) && hasPass ? -1 : 1.3,
-    reason: mustStopOrPass ? "已经获得球权，选择保留足球结束回合" : "保留剩余手牌并结束出牌阶段",
+    score: !canAct(game) ? 10 : game.turn.actionsSpent >= 2 ? 5.2 : hasBall(player) && hasPass ? -1 : 1.3,
+    reason: !canAct(game) ? "行动点已经用完" : "保留剩余手牌并结束出牌阶段",
   });
-  if (game.turn.cardsPlayed === 0) {
+  if (game.turn.actionsSpent === 0) {
     choices.push({
       value: { kind: "skip-draw" },
-      score: player.hand.length <= 3 ? 6.2 : player.hand.length < handLimit(game, player) ? 2.6 : -2.5,
+      score: countedHandSize(player) <= 3 ? 6.2 : countedHandSize(player) < handLimit(game, player) ? 2.6 : -2.5,
       reason: "跳过出牌阶段，再补充两张牌",
     });
   }
 
-  if (canPlayBeforePass(game, player)) {
+  if (canAct(game)) {
     const movePlans: AiCandidate<AiTurnPlan>[] = [];
     actions.forEach((card) => {
       movementTargets(game, player, card.suit).forEach((position) => {
@@ -526,11 +583,28 @@ function runAiTurn(game: GameState) {
     const moveChoice = weightedAiChoice(movePlans, AI_TUNING.detailTemperature);
     if (moveChoice) choices.push({ value: moveChoice.value, score: moveChoice.score, reason: moveChoice.reason });
 
+    if (player.team !== game.offense && !game.turn.pressUsed) {
+      const pressPlans = game.players
+        .filter((target) => target.team !== player.team && target.hand.length > 0 && isAdjacent(player.position, target.position))
+        .map<AiCandidate<AiTurnPlan>>((target) => {
+          const chance = hasBall(target) ? 1 / target.hand.length : 0;
+          return {
+            value: { kind: "press", targetId: target.id },
+            score: 2.8 + chance * 11 + (hasBall(target) ? 3 : 0),
+            reason: hasBall(target)
+              ? `近身上抢 ${target.label}，抢到足球的估计概率 ${Math.round(chance * 100)}%`
+              : `无卡试探 ${target.label} 的手牌`,
+          };
+        });
+      const pressChoice = weightedAiChoice(pressPlans, AI_TUNING.detailTemperature);
+      if (pressChoice) choices.push({ value: pressChoice.value, score: pressChoice.score, reason: pressChoice.reason });
+    }
+
     if (player.team !== game.offense && !game.turn.tackleUsed) {
       const tackle = specialCards(player, "tackle")[0];
       if (tackle) {
         const tacklePlans = game.players
-          .filter((target) => target.team !== player.team && target.hand.length > 0)
+          .filter((target) => target.team !== player.team && target.hand.length > 0 && isAdjacent(player.position, target.position))
           .map<AiCandidate<AiTurnPlan>>((target) => {
             const chance = hasBall(target) ? 1 / target.hand.length : 0;
             return {
@@ -547,7 +621,7 @@ function runAiTurn(game: GameState) {
     }
   }
 
-  if (hasBall(player)) {
+  if (hasBall(player) && canAct(game)) {
     const passPlans: AiCandidate<AiTurnPlan>[] = [];
     actions.forEach((card) => {
       legalPassTargets(game, player, card.suit).forEach((position) => {
@@ -566,7 +640,7 @@ function runAiTurn(game: GameState) {
 
   const selection = weightedAiChoice(choices, AI_TUNING.turnTemperature);
   if (!selection) return finishPlayPhase(game);
-  const labels = { "skip-draw": "蓄力抽牌", end: "结束出牌", move: "连续移动", tackle: "使用抢断卡", pass: "落点传球" };
+  const labels = { "skip-draw": "蓄力抽牌", end: "结束出牌", move: "移动", tackle: "使用抢断卡", press: "近身上抢", pass: "落点传球" };
   logAiSelection(game, player, selection, labels[selection.value.kind]);
   const plan = selection.value;
   if (plan.kind === "skip-draw") {
@@ -579,6 +653,8 @@ function runAiTurn(game: GameState) {
     if (!resolveMoveAction(game, plan.cardId, plan.position)) finishPlayPhase(game);
   } else if (plan.kind === "tackle") {
     if (!resolveTackleAction(game, plan.cardId, plan.targetId)) finishPlayPhase(game);
+  } else if (plan.kind === "press") {
+    if (!resolvePressAction(game, plan.targetId)) finishPlayPhase(game);
   } else if (!resolvePassAction(game, plan.cardId, plan.position)) {
     finishPlayPhase(game);
   }
@@ -589,7 +665,7 @@ function runAiDiscard(game: GameState) {
   if (!playerId) return;
   const player = playerById(game, playerId);
   let safety = 16;
-  while (player.hand.length > handLimit(game, player) && safety > 0) {
+  while (countedHandSize(player) > handLimit(game, player) && safety > 0) {
     safety -= 1;
     const actions = actionCards(player);
     const suitCounts = new Map<Suit, number>();
@@ -644,8 +720,8 @@ export default function Home() {
 
   const validCells = (() => {
     if (!humanTurn || selectedCard?.kind !== "action") return new Set<number>();
-    if (actionMode === "move" && canPlayBeforePass(game, current)) return movementTargets(game, current, selectedCard.suit);
-    if (actionMode === "pass" && hasBall(current)) return legalPassTargets(game, current, selectedCard.suit);
+    if (actionMode === "move" && canAct(game)) return movementTargets(game, current, selectedCard.suit);
+    if (actionMode === "pass" && hasBall(current) && canAct(game)) return legalPassTargets(game, current, selectedCard.suit);
     return new Set<number>();
   })();
 
@@ -694,7 +770,7 @@ export default function Home() {
   }
 
   function skipPlayAndDraw() {
-    if (!humanTurn || game.turn.cardsPlayed !== 0) return;
+    if (!humanTurn || game.turn.actionsSpent !== 0) return;
     setGame((previous) => {
       const next = structuredClone(previous);
       const player = activePlayer(next);
@@ -743,6 +819,15 @@ export default function Home() {
     clearSelections();
   }
 
+  function performPress(targetId: string) {
+    if (!humanTurn || actionMode !== "press") return;
+    setGame((previous) => {
+      const next = structuredClone(previous);
+      return resolvePressAction(next, targetId) ? next : previous;
+    });
+    clearSelections();
+  }
+
   function discardOverflow(cardId: string) {
     setGame((previous) => {
       const next = structuredClone(previous);
@@ -766,6 +851,7 @@ export default function Home() {
     if (!humanTurn) return;
     const target = game.players.find((player) => player.position === position);
     if (actionMode === "tackle" && target) performTackle(target.id);
+    else if (actionMode === "press" && target) performPress(target.id);
     else if (actionMode === "move") performMove(position);
     else if (actionMode === "pass") performPass(position);
   }
@@ -776,12 +862,12 @@ export default function Home() {
     if (game.phase === "turn") {
       const restriction = hasBall(current)
         ? game.turn.acquiredBall
-          ? "本回合中途获得足球：现在只能传球或结束回合。"
-          : `持球者传球前最多使用 ${GAME_BALANCE.maxCardsBeforePassForHolder} 张其他牌。`
-        : "可按任意顺序连续使用行动卡和特殊卡。";
+          ? "刚刚获得足球，剩余行动已重置为1。"
+          : "持球者本回合拥有1次行动。"
+        : "无球队员本回合拥有2次行动。";
       return current.id === humanPlayerId
-        ? [`${current.label} · 出牌阶段`, `已自动抽两张。${restriction}`]
-        : [`${current.label} · AI 出牌阶段`, `AI 正在逐张评估移动、特殊卡、落点传球与结束时机。`];
+        ? [`${current.label} · 出牌阶段`, `已自动抽1张。${restriction}`]
+        : [`${current.label} · AI 出牌阶段`, `AI 正在评估剩余 ${game.turn.actionsRemaining} 次行动。`];
     }
     if (game.phase === "discard" && game.discardQueue[0]) {
       const player = playerById(game, game.discardQueue[0]);
@@ -829,10 +915,10 @@ export default function Home() {
                 const goal = position === RED_GOAL ? "red" : position === BLUE_GOAL ? "blue" : null;
                 const valid = validCells.has(position);
                 const setupSelected = player?.id === setupPlayerId && (game.phase === "setup" || game.phase === "kickoff");
-                const tackleTarget = humanTurn && actionMode === "tackle" && player && player.team !== current.team && player.hand.length > 0;
+                const closeInteractionTarget = humanTurn && (actionMode === "tackle" || actionMode === "press") && player && player.team !== current.team && player.hand.length > 0 && isAdjacent(current.position, player.position);
                 return <button
                   key={position}
-                  className={`pitch-cell ${(Math.floor(position / 8) + position) % 2 ? "stripe" : ""} ${valid ? "valid" : ""} ${goal ? `goal ${goal}` : ""} ${tackleTarget ? "tackle-target" : ""}`}
+                  className={`pitch-cell ${(Math.floor(position / 8) + position) % 2 ? "stripe" : ""} ${valid ? "valid" : ""} ${goal ? `goal ${goal}` : ""} ${closeInteractionTarget ? "tackle-target" : ""}`}
                   onClick={() => handleCell(position)}
                   aria-label={`${squareName(position)}${player ? `，${player.label}` : ""}${game.looseBall === position ? "，足球落点" : ""}`}
                   role="gridcell"
@@ -853,7 +939,7 @@ export default function Home() {
         </section>
 
         <aside className="control-column">
-          <section className="phase-card"><p className="section-label">MATCH DIRECTOR</p><h2>{phaseCopy[0]}</h2><p>{phaseCopy[1]}</p><div className="phase-rule"><span>{game.phase === "turn" ? `已出 ${game.turn.cardsPlayed} 张` : "LIVE"}</span><i /></div></section>
+          <section className="phase-card"><p className="section-label">MATCH DIRECTOR</p><h2>{phaseCopy[0]}</h2><p>{phaseCopy[1]}</p><div className="phase-rule"><span>{game.phase === "turn" ? `剩余行动 ${game.turn.actionsRemaining}` : "LIVE"}</span><i /></div></section>
           {aiThinking && actorId && <section className="ai-thinking-panel" aria-live="polite"><span className="ai-pulse" /><div><strong>{playerById(game, actorId).label} 正在思考</strong><small>AI 会逐步行动，高收益选择更常出现但不固定。</small></div></section>}
           {game.aiNote && <p className="ai-note"><strong>最近一次 AI 判断</strong>{game.aiNote}</p>}
 
@@ -867,19 +953,21 @@ export default function Home() {
 
           {humanTurn && <section className="action-card-panel">
             <div className="panel-title-row"><h3>出牌阶段</h3><span>{current.team === game.offense ? "进攻方" : "防守方"}</span></div>
-            <button className="draw-action" disabled={game.turn.cardsPlayed !== 0} onClick={skipPlayAndDraw}><span>蓄力</span><strong>+{GAME_BALANCE.skipPlayDraw}</strong><small>跳过整个出牌阶段</small></button>
+            <button className="draw-action" disabled={game.turn.actionsSpent !== 0} onClick={skipPlayAndDraw}><span>蓄力</span><strong>+{GAME_BALANCE.skipPlayDraw}</strong><small>跳过整个出牌阶段</small></button>
             <div className="action-row"><button className="secondary-action" onClick={endPlayPhase}>结束出牌</button></div>
             {selectedCard?.kind === "action" && <div className="mode-grid">
-              <button disabled={!canPlayBeforePass(game, current)} className={actionMode === "move" ? "active" : ""} onClick={() => setActionMode("move")}>MOVE<small>连续移动</small></button>
-              {hasBall(current) && <button className={actionMode === "pass" ? "active" : ""} onClick={() => setActionMode("pass")}>PASS<small>选择空格后结束出牌</small></button>}
+              <button disabled={!canAct(game)} className={actionMode === "move" ? "active" : ""} onClick={() => setActionMode("move")}>MOVE<small>消耗1次行动</small></button>
+              {hasBall(current) && <button disabled={!canAct(game)} className={actionMode === "pass" ? "active" : ""} onClick={() => setActionMode("pass")}>PASS<small>传球后结束出牌</small></button>}
             </div>}
-            {selectedCard?.kind === "special" && <div className="mode-grid"><button disabled={!canPlayBeforePass(game, current) || current.team === game.offense || game.turn.tackleUsed} className={actionMode === "tackle" ? "active" : ""} onClick={() => setActionMode("tackle")}>TACKLE<small>每回合最多一次</small></button></div>}
+            {current.team !== game.offense && <div className="mode-grid"><button disabled={!canAct(game) || game.turn.pressUsed} className={actionMode === "press" ? "active" : ""} onClick={() => { setSelectedCardId(null); setActionMode("press"); }}>PRESS<small>近身无卡上抢</small></button></div>}
+            {selectedCard?.kind === "special" && <div className="mode-grid"><button disabled={!canAct(game) || current.team === game.offense || game.turn.tackleUsed} className={actionMode === "tackle" ? "active" : ""} onClick={() => setActionMode("tackle")}>TACKLE<small>近身抢牌 · 最多一次</small></button></div>}
             {actionMode === "move" && <p className="action-hint">点击高亮位置。移动路径经过落地足球时会立即获得足球。</p>}
             {actionMode === "pass" && <p className="action-hint">点击高亮空格传球；有对方球员挡在线路中间的格子不可选择。</p>}
-            {actionMode === "tackle" && <p className="action-hint">点击任意有手牌的对方球员，随机抽取一张未知牌。</p>}
+            {actionMode === "tackle" && <p className="action-hint">点击王的一格以内的对手；抽到的牌都会加入手牌。</p>}
+            {actionMode === "press" && <p className="action-hint">点击王的一格以内的对手；只有抽中足球才会拿走，否则原样放回。</p>}
           </section>}
 
-          {game.phase === "discard" && game.discardQueue[0] === humanPlayerId && <section className="action-card-panel"><div className="panel-title-row"><h3>弃牌阶段</h3><span>{focusPlayer.hand.length} / {handLimit(game, focusPlayer)}</span></div><div className="revealed-hand compact">{focusPlayer.hand.map((card) => <button key={card.id} className={card.kind} disabled={card.kind === "ball"} onClick={() => discardOverflow(card.id)}><strong>{card.kind === "ball" ? "●" : card.kind === "action" ? SUIT_INFO[card.suit].icon : SPECIAL_INFO[card.special].icon}</strong><span>{card.kind === "ball" ? "FOOTBALL" : card.kind === "action" ? SUIT_INFO[card.suit].name : SPECIAL_INFO[card.special].name}</span></button>)}</div></section>}
+          {game.phase === "discard" && game.discardQueue[0] === humanPlayerId && <section className="action-card-panel"><div className="panel-title-row"><h3>弃牌阶段</h3><span>{countedHandSize(focusPlayer)} / {handLimit(game, focusPlayer)}{hasBall(focusPlayer) ? " + 球" : ""}</span></div><div className="revealed-hand compact">{focusPlayer.hand.map((card) => <button key={card.id} className={card.kind} disabled={card.kind === "ball"} onClick={() => discardOverflow(card.id)}><strong>{card.kind === "ball" ? "●" : card.kind === "action" ? SUIT_INFO[card.suit].icon : SPECIAL_INFO[card.special].icon}</strong><span>{card.kind === "ball" ? "FOOTBALL" : card.kind === "action" ? SUIT_INFO[card.suit].name : SPECIAL_INFO[card.special].name}</span></button>)}</div></section>}
 
           {game.phase === "gameover" && <section className={`winner-card ${game.winner}`}><span>FULL TIME</span><strong>{game.scores.red} — {game.scores.blue}</strong><button onClick={() => { setGame(createGame()); clearSelections(); setSetupPlayerId(humanPlayerId); }}>再来一局</button></section>}
           <section className="match-log"><div className="panel-title-row"><h3>比赛记录</h3><span>最新在前</span></div><div className="log-scroll">{game.log.map((message, index) => <p key={`${message}-${index}`}><i>{String(game.log.length - index).padStart(2, "0")}</i>{message}</p>)}</div></section>
@@ -887,7 +975,7 @@ export default function Home() {
       </div>
 
       <section className="hand-dock" aria-label={`${focusPlayer.label} 手牌`}>
-        <div className="hand-owner"><span className={`owner-badge ${focusPlayer.team}`}>{focusPlayer.label}</span><div><strong>{focusIsHuman ? "你的手牌" : "AI 手牌"}</strong><small>{focusIsHuman ? "行动卡负责移动/传球，特殊卡拥有独立效果" : "牌面隐藏 · 持球者仍公开"}</small></div><b>{focusPlayer.hand.length} / {handLimit(game, focusPlayer)}</b></div>
+        <div className="hand-owner"><span className={`owner-badge ${focusPlayer.team}`}>{focusPlayer.label}</span><div><strong>{focusIsHuman ? "你的手牌" : "AI 手牌"}</strong><small>{focusIsHuman ? "足球不计入手牌上限" : "牌面隐藏 · 持球者仍公开"}</small></div><b>{countedHandSize(focusPlayer)} / {handLimit(game, focusPlayer)}{hasBall(focusPlayer) ? " + 球" : ""}</b></div>
         <div className="card-fan">
           {!focusIsHuman && focusPlayer.hand.map((card, index) => <span key={`${card.id}-${index}`} className="play-card hidden-card" aria-label="AI 暗牌"><span className="card-corner">PASS AI</span><strong>?</strong><h4>HIDDEN</h4><small>UNKNOWN CARD</small></span>)}
           {focusIsHuman && focusPlayer.hand.map((card) => {
