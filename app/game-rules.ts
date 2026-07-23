@@ -153,3 +153,14 @@ export function passBlockedByPlayer(
   const path = passPath(from, to, suit);
   return path ? path.some((cell) => players.some((player) => player.position === cell)) : true;
 }
+
+export function passBlockerCount(
+  from: number,
+  to: number,
+  suit: RuleSuit,
+  players: Array<{ position: number }>,
+) {
+  const path = passPath(from, to, suit);
+  if (!path) return Number.POSITIVE_INFINITY;
+  return path.filter((cell) => players.some((player) => player.position === cell)).length;
+}

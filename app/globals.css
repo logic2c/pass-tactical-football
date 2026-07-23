@@ -100,6 +100,13 @@ h1 { margin: 0; font-size: 34px; line-height: .95; letter-spacing: -.06em; font-
 .action-banner.goal.blue > span { background: var(--blue); }
 .pitch-frame { position: relative; padding: 13px 31px 27px 13px; background: #27342a; border: 2px solid var(--ink); box-shadow: var(--shadow); }
 .pitch { position: relative; aspect-ratio: 1; display: grid; grid-template-columns: repeat(8, 1fr); overflow: hidden; border: 2px solid rgba(255,255,255,.78); background: var(--grass); }
+.trace-layer { position: absolute; inset: 0; z-index: 6; overflow: hidden; pointer-events: none; }
+.trace-line { position: absolute; height: 0; transform-origin: 0 50%; border-top: 3px solid rgba(255,255,255,.72); filter: drop-shadow(0 1px 1px rgba(0,0,0,.55)); opacity: .72; }
+.trace-line.red { border-color: #ff8b83; }.trace-line.blue { border-color: #8eb5ff; }
+.trace-line.pass { border-top-style: dashed; }
+.trace-line.response { border-color: #ffd45f; border-top-width: 4px; opacity: .88; }
+.trace-line i { position: absolute; right: -1px; top: -6px; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 9px solid currentColor; }
+.trace-line.red i { color: #ff8b83; }.trace-line.blue i { color: #8eb5ff; }.trace-line.response i { color: #ffd45f; }
 .pitch::before, .pitch::after { content: ""; position: absolute; left: 28%; right: 28%; height: 13%; border: 2px solid rgba(255,255,255,.55); z-index: 1; pointer-events: none; }
 .pitch::before { top: -2px; border-top: 0; }.pitch::after { bottom: -2px; border-bottom: 0; }
 .halfway-line { position: absolute; left: 0; right: 0; top: 50%; border-top: 2px solid rgba(255,255,255,.55); z-index: 1; pointer-events: none; }
@@ -167,6 +174,7 @@ h1 { margin: 0; font-size: 34px; line-height: .95; letter-spacing: -.06em; font-
 .draw-action { width: 100%; display: grid; grid-template-columns: 1fr auto; align-items: center; border: 1px solid var(--ink); background: var(--acid); padding: 10px 12px; cursor: pointer; text-align: left; }
 .draw-action span { font-size: 13px; font-weight: 1000; }.draw-action strong { grid-row: span 2; font-size: 26px; }.draw-action small { font-size: 8px; color: #545a3a; }
 .draw-action:disabled { background: #d9d8cf; opacity: .55; cursor: not-allowed; }
+.status-chip { margin: 9px 0 0; padding: 8px 10px; border: 1px solid var(--ink); background: #fff0b4; font-size: 9px; font-weight: 900; line-height: 1.4; }
 .mode-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; margin-top: 9px; }
 .mode-grid button, .response-actions button { border: 1px solid var(--ink); padding: 9px; background: transparent; cursor: pointer; font-size: 10px; font-weight: 1000; }
 .mode-grid button small { display: block; margin-top: 3px; font-size: 7px; font-weight: 700; color: #737872; }
@@ -186,6 +194,13 @@ h1 { margin: 0; font-size: 34px; line-height: .95; letter-spacing: -.06em; font-
 .response-actions.two-step > span.ready { border-color: var(--ink); color: var(--ink); background: var(--acid); }
 .facedown-row { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 10px; }.facedown-row span { width: 38px; height: 48px; display: grid; place-items: center; color: white; background: repeating-linear-gradient(135deg, var(--ink) 0 5px, #343b3d 5px 10px); border: 2px solid white; outline: 1px solid var(--ink); font-size: 7px; font-weight: 1000; transform: rotate(-2deg); }.facedown-row span:nth-child(even) { transform: rotate(2deg); }
 .revealed-hand { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; }.revealed-hand button { min-height: 88px; display: grid; place-items: center; border: 1px solid var(--ink); background: white; cursor: pointer; }.revealed-hand button:hover { background: var(--acid); box-shadow: 3px 3px 0 var(--ink); transform: translateY(-2px); }.revealed-hand button.ball { position: static; width: auto; aspect-ratio: auto; border-radius: 0; color: var(--ink); box-shadow: none; }.revealed-hand button strong { font-size: 26px; }.revealed-hand button span { font-size: 9px; font-weight: 1000; }.revealed-hand button small { font-size: 7px; color: #777; }.revealed-hand.compact button { min-height: 62px; }.revealed-hand button:disabled { background: #ddd9cf; opacity: .55; transform: none; box-shadow: none; }
+.save-response-panel { border-left: 7px solid #ffbd57; }
+.save-discard-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 10px; }
+.save-discard-grid button { min-height: 54px; display: grid; place-items: center; border: 1px solid var(--ink); background: white; cursor: pointer; }
+.save-discard-grid button.selected { background: var(--acid); box-shadow: 3px 3px 0 var(--ink); transform: translateY(-2px); }
+.save-discard-grid strong { font-size: 18px; }.save-discard-grid span { font-size: 7px; font-weight: 1000; }
+.response-summary { margin: 10px 0; padding: 7px; color: white; background: var(--ink); font-size: 9px; font-weight: 900; text-align: center; }
+.secondary-action.full { width: 100%; }
 .winner-card { text-align: center; border-width: 3px; }.winner-card.red { border-color: var(--red); }.winner-card.blue { border-color: var(--blue); }.winner-card span { display: block; font-size: 9px; letter-spacing: .18em; font-weight: 1000; }.winner-card strong { display: block; margin: 8px 0 12px; font-size: 38px; }.winner-card button { border: 0; background: var(--ink); color: white; padding: 10px 18px; cursor: pointer; font-weight: 900; }
 .match-log { min-height: 165px; box-shadow: none; background: rgba(247,244,234,.62); }.log-scroll { max-height: 166px; overflow-y: auto; display: flex; flex-direction: column; gap: 5px; padding-right: 4px; }.log-scroll p { display: grid; grid-template-columns: 24px 1fr; gap: 7px; margin: 0; padding: 6px 7px; background: rgba(255,255,255,.48); font-size: 9px; line-height: 1.45; }.log-scroll i { font-style: normal; color: var(--red); font-weight: 1000; }
 
@@ -194,6 +209,8 @@ h1 { margin: 0; font-size: 34px; line-height: .95; letter-spacing: -.06em; font-
 .card-fan { display: flex; gap: 9px; align-items: center; overflow-x: auto; padding: 7px 4px 12px; }
 .play-card { width: 112px; min-width: 112px; height: 142px; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; border: 1px solid var(--ink); background: #f8f6ee; cursor: pointer; box-shadow: 3px 4px 0 rgba(20,25,28,.82); transition: .16s ease; }
 .play-card::before { content: ""; position: absolute; inset: 6px; border: 1px solid rgba(20,25,28,.16); pointer-events: none; }.play-card:hover:not(:disabled), .play-card.selected { transform: translateY(-7px) rotate(-1deg); box-shadow: 6px 9px 0 var(--ink); }.play-card.selected { background: var(--acid); }.play-card.ball { position: relative; right: auto; top: auto; aspect-ratio: auto; border-radius: 0; color: var(--ink); background: radial-gradient(circle at center, white 0 18%, transparent 19%), repeating-conic-gradient(#f6f3e9 0 11deg,#dedacf 11deg 22deg); box-shadow: 3px 4px 0 rgba(20,25,28,.82); }.play-card:disabled { opacity: .82; cursor: default; }.play-card > strong { font-size: 44px; line-height: 1; }.play-card h4 { margin: 10px 0 5px; font-size: 12px; letter-spacing: .06em; }.play-card > small { font-size: 6px; color: #676c67; letter-spacing: .06em; }.card-corner { position: absolute; left: 11px; top: 10px; font-size: 7px; font-weight: 1000; letter-spacing: .08em; }
+.card-cost { position: absolute; right: 9px; top: 8px; z-index: 2; width: 25px; height: 25px; display: grid; place-items: center; border: 2px solid var(--ink); border-radius: 50%; color: white; background: var(--blue); box-shadow: 2px 2px 0 var(--ink); font-size: 12px; font-weight: 1000; }
+.play-card.special .card-cost { background: #b65c00; }
 .play-card.special, .revealed-hand button.special { background: linear-gradient(145deg, #ffe7b3, #ffbd57); }
 .play-card.special::after { content: "SPECIAL"; position: absolute; right: 9px; bottom: 9px; padding: 2px 4px; background: var(--ink); color: #ffbd57; font-size: 6px; font-weight: 1000; letter-spacing: .1em; }
 .play-card.hidden-card { color: white; background: repeating-linear-gradient(135deg, var(--ink) 0 8px, #30383b 8px 16px); border: 3px solid #f7f4ea; outline: 1px solid var(--ink); cursor: default; transform: rotate(-1deg); }.play-card.hidden-card:nth-child(even) { transform: rotate(1deg); }.play-card.hidden-card::before { border-color: rgba(255,255,255,.28); }.play-card.hidden-card > strong { color: var(--acid); }.play-card.hidden-card > small { color: #cbd0ca; }

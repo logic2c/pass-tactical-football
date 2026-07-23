@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const { BLUE_GOAL, movementPath, movementTargets, passBlockedByPlayer, passPath } = await import(
+const { BLUE_GOAL, movementPath, movementTargets, passBlockerCount, passBlockedByPlayer, passPath } = await import(
   new URL("../app/game-rules.ts", import.meta.url)
 );
 const { candidateProbabilities, weightedAiChoice } = await import(
@@ -38,19 +38,21 @@ test("source implements staged turns, special cards, and end-of-turn discarding"
   const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const rules = await readFile(new URL("../app/game-rules.ts", import.meta.url), "utf8");
 
-  assert.match(source, /specialCards: \{ tackle: 6 \}/);
+  assert.match(source, /actionCardsPerSuit: 13/);
+  assert.match(source, /specialCards: \{ tackle: 2, sprint: 2, supply: 2, "long-pass": 3, save: 3, "flying-kick": 1 \}/);
   assert.match(source, /turnDraw: 1/);
   assert.match(source, /actionPoints: \{ holder: 1, other: 2 \}/);
   assert.match(source, /drawInto\(game, player, GAME_BALANCE\.turnDraw\);/);
   assert.match(source, /game\.discardQueue = \[player\.id\];/);
-  assert.match(source, /game\.turn\.actionsSpent !== 0/);
+  assert.match(source, /game\.turn\.cardsPlayed !== 0/);
   assert.match(source, /function markBallAcquired\(game: GameState\)/);
   assert.doesNotMatch(source, /game\.turn\.actionsRemaining = 1;/);
   assert.match(source, /game\.turn\.tackleUsed = true;/);
   assert.match(source, /game\.turn\.pressUsed = true;/);
   assert.match(source, /function countedHandSize\(player: Player\)/);
   assert.match(rules, /const range = 3;/);
-  assert.doesNotMatch(source, /pass-response|runAiResponse|takeInterceptCard|越位/);
+  assert.match(source, /type Phase = "setup" \| "turn" \| "save-response"/);
+  assert.match(source, /hasOffsidePlayer/);
 });
 
 test("movement ranges and goal access follow the current rules", () => {
@@ -116,6 +118,12 @@ test("teammates and opponents both block pass routes", () => {
   assert.equal(passBlockedByPlayer(35, 52, "knight", [{ position: 43, team: "red" }]), true);
 });
 
+test("long passes may cross one player but never a second", () => {
+  assert.equal(passBlockerCount(56, 0, "rock", [{ position: 48 }]), 1);
+  assert.equal(passBlockerCount(56, 0, "rock", [{ position: 48 }, { position: 40 }]), 2);
+  assert.equal(passBlockerCount(35, 52, "knight", [{ position: 43 }]), 1);
+});
+
 test("AI choices remain random while favoring higher board value", () => {
   const candidates = [
     { value: "poor", score: -2, reason: "low value" },
@@ -135,12 +143,18 @@ test("AI choices remain random while favoring higher board value", () => {
 test("AI automation covers multi-card turns and discarding without legacy pass phases", async () => {
   const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 
-  assert.match(source, /if \(game\.phase === "turn"\) runAiTurn\(game\)/);
+  assert.match(source, /if \(game\.phase === "turn"\) runAiTurn\(game, humanPlayerId\)/);
+  assert.match(source, /else if \(game\.phase === "save-response"\) runAiSaveResponse\(game\)/);
   assert.match(source, /else if \(game\.phase === "discard"\) runAiDiscard\(game\)/);
   assert.match(source, /kind: "skip-draw"/);
   assert.match(source, /kind: "tackle"/);
   assert.match(source, /kind: "press"/);
   assert.match(source, /kind: "pass"/);
+  assert.match(source, /kind: "sprint"/);
+  assert.match(source, /kind: "supply"/);
+  assert.match(source, /kind: "long-pass"/);
+  assert.match(source, /kind: "flying-kick"/);
+  assert.match(source, /resolveSaveResponse/);
   assert.match(source, /recipient\.hand\.push\(ball\)/);
   assert.match(source, /firstPlayer\?\.team === passer\.team/);
   assert.match(source, /className=\{`action-banner/);
@@ -148,7 +162,8 @@ test("AI automation covers multi-card turns and discarding without legacy pass p
   assert.match(source, /key=\{position\}/);
   assert.doesNotMatch(source, /key=\{`\$\{position\}-\$\{visibleEvent/);
   assert.match(source, /scoreGoal\(game, player, "移动", from, path\)/);
-  assert.doesNotMatch(source, /pass-response|pass-target|intercept/);
+  assert.match(source, /className="card-cost"/);
+  assert.match(source, /className=\{`trace-line/);
 
   const response = await render();
   const html = await response.text();
