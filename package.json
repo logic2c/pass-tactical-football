@@ -1,6 +1,8 @@
 {
   "name": "pass-game-web",
   "version": "0.1.0",
+  "description": "PASS tactical football card game",
+  "author": "logic2c",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -9,6 +11,10 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "vinext start",
+    "desktop:dev": "vite --config vite.desktop.config.ts",
+    "desktop:build-ui": "vite build --config vite.desktop.config.ts",
+    "desktop:dist": "pnpm desktop:build-ui && electron-builder --win portable",
+    "desktop:check": "node scripts/check-desktop-render.mjs",
     "test": "pnpm run build && node --experimental-strip-types --test --test-isolation=none tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
@@ -28,6 +34,8 @@
     "@vitejs/plugin-react": "6.0.2",
     "@vitejs/plugin-rsc": "0.5.26",
     "drizzle-kit": "0.31.10",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.6",
     "react-server-dom-webpack": "19.2.6",
@@ -36,6 +44,27 @@
     "vinext": "0.0.50",
     "vite": "8.0.13",
     "wrangler": "4.92.0"
+  },
+  "main": "desktop/electron/main.mjs",
+  "build": {
+    "appId": "com.logic2c.pass",
+    "productName": "PASS",
+    "artifactName": "PASS-${version}-Windows.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "desktop-dist/**/*",
+      "desktop/electron/**/*",
+      "TUTORIAL.md",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        "portable"
+      ]
+    }
   },
   "type": "module"
 }

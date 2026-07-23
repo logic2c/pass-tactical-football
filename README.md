@@ -104,3 +104,9 @@ pnpm lint
 - 根据单机测试继续调整行动节奏和特殊卡组合。
 - 正式版本加入球员移动、传球、拾球和抢断动画。
 - 规则稳定后实现网页多人联机，并继续评估 Steam 发布。
+
+## Windows 单机版
+
+单机版与网页版共用规则和 AI，不需要账号、服务器、Node.js 或 GitHub 配置。玩家下载 `PASS-0.1.0-Windows.exe` 后直接双击即可游玩，按 `F1` 可打开内置文字教程。
+
+开发者运行 `pnpm desktop:dist` 可在 `release/` 生成新的 Windows 便携版。桌面打包说明和未来联机结构见 [DESKTOP.md](./DESKTOP.md)，独立文字教程见 [TUTORIAL.md](./TUTORIAL.md)。
