@@ -141,7 +141,7 @@ const FORMATION: Record<string, number> = {
 
 const GAME_BALANCE = {
   actionCardsPerSuit: 13,
-  specialCards: { tackle: 2, sprint: 2, supply: 2, "long-pass": 3, save: 3, "flying-kick": 1 },
+  specialCards: { tackle: 2, sprint: 2, supply: 2, "long-pass": 4, save: 1, "flying-kick": 2 },
   startingHand: 3,
   turnDraw: 1,
   skipPlayDraw: 2,

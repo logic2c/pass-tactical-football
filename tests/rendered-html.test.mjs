@@ -39,7 +39,7 @@ test("source implements staged turns, special cards, and end-of-turn discarding"
   const rules = await readFile(new URL("../app/game-rules.ts", import.meta.url), "utf8");
 
   assert.match(source, /actionCardsPerSuit: 13/);
-  assert.match(source, /specialCards: \{ tackle: 2, sprint: 2, supply: 2, "long-pass": 3, save: 3, "flying-kick": 1 \}/);
+  assert.match(source, /specialCards: \{ tackle: 2, sprint: 2, supply: 2, "long-pass": 4, save: 1, "flying-kick": 2 \}/);
   assert.match(source, /turnDraw: 1/);
   assert.match(source, /actionPoints: \{ holder: 1, other: 2 \}/);
   assert.match(source, /drawInto\(game, player, GAME_BALANCE\.turnDraw\);/);
