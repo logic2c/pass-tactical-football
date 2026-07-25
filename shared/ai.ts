@@ -1,12 +1,6 @@
-export type AiCandidate<T> = {
-  value: T;
-  score: number;
-  reason: string;
-};
+import type { AiCandidate, AiSelection } from "./types";
 
-export type AiSelection<T> = AiCandidate<T> & {
-  probability: number;
-};
+export type { AiCandidate, AiSelection };
 
 export function candidateProbabilities<T>(candidates: AiCandidate<T>[], temperature = 2.2) {
   if (candidates.length === 0) return [];

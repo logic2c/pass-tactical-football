@@ -1,0 +1,21 @@
+{
+  "name": "pass-game-server",
+  "version": "0.1.0",
+  "description": "PASS multiplayer WebSocket server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch index.ts",
+    "start": "tsx index.ts"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "uuid": "^11.0.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.0",
+    "@types/uuid": "^10.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.0"
+  }
+}
