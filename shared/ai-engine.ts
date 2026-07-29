@@ -180,15 +180,38 @@ function potentialShotLanes(game: GameState, attacker: Player) {
   }));
 }
 
-function responsibilityMoveScore(game: GameState, player: Player, position: number) {
-  const targets = defensiveResponsibilityIds(game, player).map((id) => playerById(game, id));
+export function defensivePriorityMoveScore(game: GameState, player: Player, position: number) {
+  if (game.turn.actionsSpent > 0) return 0;
   const holder = game.players.find((candidate) => candidate.team !== player.team && hasBall(candidate));
-  return targets.reduce((score, target) => {
+  if (!holder) return 0;
+  const teammates = game.players.filter((candidate) => candidate.team === player.team);
+  const primaryHolderDefender = [...teammates].sort((left, right) =>
+    gridDistance(left.position, holder.position) - gridDistance(right.position, holder.position),
+  )[0];
+  const holderPressure = primaryHolderDefender?.id === player.id
+    ? (gridDistance(player.position, holder.position) - gridDistance(position, holder.position)) * 2.5 +
+      (gridDistance(position, holder.position) <= 1 ? 9 : 0)
+    : 0;
+
+  const responsibilityIds = new Set(defensiveResponsibilityIds(game, player));
+  const threats = game.players.filter((target) => {
+    if (target.team === player.team || hasBall(target) || potentialShotLanes(game, target).length === 0) return false;
+    return SUITS.some((suit) => {
+      const path = passPath(holder.position, target.position, suit);
+      return Boolean(path && !path.some((cell) => game.players.some((candidate) =>
+        candidate.id !== holder.id && candidate.id !== target.id && candidate.position === cell,
+      )));
+    });
+  });
+  const threatDefense = threats.reduce((best, target) => {
     const closesTarget = gridDistance(player.position, target.position) - gridDistance(position, target.position);
-    const marksTarget = gridDistance(position, target.position) <= 1 ? 6 : 0;
+    const alreadyMarked = teammates.some((candidate) => candidate.id !== player.id && gridDistance(candidate.position, target.position) <= 1);
+    const marksTarget = !alreadyMarked && gridDistance(position, target.position) <= 1 ? 18 : 0;
     const blocksPass = holder && SUITS.some((suit) => passPath(holder.position, target.position, suit)?.includes(position)) ? 8 : 0;
-    return score + closesTarget * 2.5 + marksTarget + blocksPass;
+    const responsibilityTieBreak = responsibilityIds.has(target.id) ? 2 : 0;
+    return Math.max(best, closesTarget * 2 + marksTarget + blocksPass + responsibilityTieBreak);
   }, 0);
+  return holderPressure + threatDefense;
 }
 
 function urgentDefenseMoveScore(game: GameState, player: Player, position: number) {
@@ -306,7 +329,7 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
             candidate.team === player.team &&
             isInOwnPenaltyArea(player.team, candidate.position),
           );
-        const responsibilityScore = player.team !== game.offense ? responsibilityMoveScore(game, player, position) : 0;
+        const responsibilityScore = player.team !== game.offense ? defensivePriorityMoveScore(game, player, position) : 0;
         const urgentDefenseScore = urgentDefenseMoveScore(game, player, position);
         const supportScore = attackingSupportMoveScore(game, player, position);
         const exceptionalMove = collectsLooseBall || exitsCrowdedPenalty || urgentDefenseScore >= 20 || supportScore >= 18 || responsibilityScore >= 10;

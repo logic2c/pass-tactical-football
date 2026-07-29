@@ -198,6 +198,12 @@ test("AI plans around turn-order responsibility, friendly hands, and loose-ball 
   assert.match(engine, /firstActionTempo/);
   assert.match(engine, /passingContinuationBonus/);
   assert.match(engine, /potentialShotLanes/);
+  assert.match(engine, /export function defensivePriorityMoveScore/);
+  assert.match(engine, /primaryHolderDefender/);
+  assert.match(engine, /potentialShotLanes\(game, target\)\.length === 0/);
+  assert.match(engine, /return Math\.max\(best,/);
+  assert.match(engine, /responsibilityTieBreak = responsibilityIds\.has\(target\.id\) \? 2 : 0/);
+  assert.match(engine, /if \(game\.turn\.actionsSpent > 0\) return 0/);
   assert.match(engine, /urgentShotThreat \? 28 : 0/);
   assert.doesNotMatch(engine, /weightedAiChoice\(movePlans|weightedAiChoice\(passPlans/);
 });
