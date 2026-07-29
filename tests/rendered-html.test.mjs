@@ -183,7 +183,8 @@ test("AI choices remain random while favoring higher board value", async () => {
   assert.match(ai, /random\(\)/);
   assert.match(ai, /goalDistance/);
   assert.match(ai, /topBandCandidates/);
-  assert.match(engine, /weightedTopBandAiChoice\(choices, 1\.15, random, 3, 4\)/);
+  assert.match(engine, /weightedTopBandAiChoice\(movePlans, 1\.15, random, 3, 4\)/);
+  assert.match(engine, /weightedTopBandAiChoice\(choices, 1\.35, random, 5, 4\)/);
 });
 
 test("AI plans around turn-order responsibility, friendly hands, and loose-ball races", async () => {
@@ -191,8 +192,11 @@ test("AI plans around turn-order responsibility, friendly hands, and loose-ball 
   assert.match(engine, /export function defensiveResponsibilityIds/);
   assert.match(engine, /if \(candidate\.team === player\.team\) break;/);
   assert.match(engine, /candidate\.team === passer\.team/);
-  assert.match(engine, /firstLikelyLooseBallCollector\(game, player, position\)/);
-  assert.match(engine, /ownCollector \? 24 : collector \? -55 : -8/);
+  assert.match(engine, /looseBallRace\(game, player, position\)/);
+  assert.match(engine, /estimatedReachChance/);
+  assert.match(engine, /secondMovePenalty/);
+  assert.match(engine, /firstActionTempo/);
+  assert.match(engine, /passingContinuationBonus/);
   assert.match(engine, /potentialShotLanes/);
   assert.match(engine, /urgentShotThreat \? 28 : 0/);
   assert.doesNotMatch(engine, /weightedAiChoice\(movePlans|weightedAiChoice\(passPlans/);

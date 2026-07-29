@@ -45,10 +45,6 @@ import {
 
 const SUITS: Suit[] = ["rock", "bishop", "knight"];
 
-function topCandidates<T>(candidates: AiCandidate<T>[], count = 3) {
-  return [...candidates].sort((left, right) => right.score - left.score).slice(0, count);
-}
-
 export function defensiveResponsibilityIds(game: GameState, player: Player) {
   const order = getTurnOrderForGame(game);
   const start = order.indexOf(player.id);
@@ -71,6 +67,63 @@ function nextTeammate(game: GameState, player: Player) {
   return undefined;
 }
 
+function nextActor(game: GameState, player: Player) {
+  const order = getTurnOrderForGame(game);
+  const start = order.indexOf(player.id);
+  return playerById(game, order[(start + 1) % order.length]);
+}
+
+function responsibleDefender(game: GameState, attacker: Player) {
+  return game.players.find((candidate) =>
+    candidate.team !== attacker.team && defensiveResponsibilityIds(game, candidate).includes(attacker.id),
+  );
+}
+
+function defensivePressureScore(game: GameState, attacker: Player, position: number) {
+  const defender = responsibleDefender(game, attacker);
+  if (!defender) return 0;
+  const distance = gridDistance(defender.position, position);
+  const canCloseForPress = countedHandSize(defender) > 0 && SUITS.some((suit) =>
+    [...movementTargets(game, defender, suit)].some((destination) => gridDistance(destination, position) <= 1),
+  );
+  return Math.min(4, distance) * 1.4 - (distance <= 1 ? 14 : 0) - (distance > 1 && canCloseForPress ? 5 : 0);
+}
+
+function receivingShotBonus(game: GameState, receiver: Player | undefined, position: number) {
+  if (!receiver) return 0;
+  const simulated = structuredClone(game);
+  const simulatedReceiver = playerById(simulated, receiver.id);
+  simulatedReceiver.position = position;
+  return potentialShotLanes(simulated, simulatedReceiver).length > 0 ? 16 : 0;
+}
+
+function teamCardDifference(game: GameState, player: Player) {
+  const ownCards = game.players
+    .filter((candidate) => candidate.team === player.team)
+    .reduce((sum, candidate) => sum + countedHandSize(candidate), 0);
+  const enemyCards = game.players
+    .filter((candidate) => candidate.team !== player.team)
+    .reduce((sum, candidate) => sum + countedHandSize(candidate), 0);
+  return ownCards - enemyCards;
+}
+
+function passingContinuationBonus(game: GameState, passer: Player, receiver: Player | undefined, position: number) {
+  if (!receiver || nextTeammate(game, passer)?.id !== receiver.id) return 0;
+  const simulated = structuredClone(game);
+  const simulatedReceiver = playerById(simulated, receiver.id);
+  simulatedReceiver.position = position;
+  let bestContinuation = Number.NEGATIVE_INFINITY;
+  actionCards(simulatedReceiver).forEach((card) => {
+    legalPassTargets(simulated, simulatedReceiver, card.suit, false).forEach((target) => {
+      const value = isGoal(target) ? 44 : scorePassTarget(simulated, simulatedReceiver, target, card);
+      bestContinuation = Math.max(bestContinuation, value);
+    });
+  });
+  if (!Number.isFinite(bestContinuation)) return 0;
+  if (bestContinuation >= 40) return 22;
+  return Math.max(0, Math.min(10, (bestContinuation - 8) * 0.55));
+}
+
 function canCollectLooseBall(game: GameState, player: Player, landing: number, exactFriendlyKnowledge: boolean) {
   if (countedHandSize(player) === 0) return false;
   const suits = exactFriendlyKnowledge
@@ -81,6 +134,12 @@ function canCollectLooseBall(game: GameState, player: Player, landing: number, e
   ));
 }
 
+function collectableSuitCount(game: GameState, player: Player, landing: number) {
+  return SUITS.filter((suit) => [...movementTargets(game, player, suit)].some((destination) =>
+    movementPath(player.position, destination, suit)?.includes(landing),
+  )).length;
+}
+
 export function firstLikelyLooseBallCollector(game: GameState, passer: Player, landing: number) {
   const order = getTurnOrderForGame(game);
   const start = order.indexOf(passer.id);
@@ -89,6 +148,27 @@ export function firstLikelyLooseBallCollector(game: GameState, passer: Player, l
     if (canCollectLooseBall(game, candidate, landing, candidate.team === passer.team)) return candidate;
   }
   return undefined;
+}
+
+function looseBallRace(game: GameState, passer: Player, landing: number) {
+  const order = getTurnOrderForGame(game);
+  const start = order.indexOf(passer.id);
+  let ballSurvivalChance = 1;
+  for (let offset = 1; offset < order.length; offset += 1) {
+    const candidate = playerById(game, order[(start + offset) % order.length]);
+    if (candidate.team === passer.team) {
+      if (canCollectLooseBall(game, candidate, landing, true)) {
+        return { receiver: candidate, interceptionRisk: 1 - ballSurvivalChance };
+      }
+      continue;
+    }
+    const reachableSuits = collectableSuitCount(game, candidate, landing);
+    if (reachableSuits === 0) continue;
+    const handCards = countedHandSize(candidate);
+    const estimatedReachChance = 1 - ((3 - reachableSuits) / 3) ** handCards;
+    ballSurvivalChance *= 1 - estimatedReachChance;
+  }
+  return { receiver: undefined, interceptionRisk: 1 - ballSurvivalChance };
 }
 
 function potentialShotLanes(game: GameState, attacker: Player) {
@@ -132,9 +212,10 @@ function attackingSupportMoveScore(game: GameState, player: Player, position: nu
   const becomesReceiver = actionCards(simulatedHolder).some((card) =>
     legalPassTargets(simulated, simulatedHolder, card.suit, simulated.turn.longPassReady).has(position),
   );
-  const shotFollowUp = potentialShotLanes(simulated, simulatedPlayer).length > 0;
+  const shotFollowUp = becomesReceiver && potentialShotLanes(simulated, simulatedPlayer).length > 0;
   const nextReceiver = nextTeammate(game, holder)?.id === player.id;
-  return (becomesReceiver ? 9 : 0) + (shotFollowUp ? 14 : 0) + (becomesReceiver && nextReceiver ? 5 : 0);
+  const escapesMarker = defensivePressureScore(simulated, simulatedPlayer, position);
+  return (becomesReceiver ? 9 : 0) + (shotFollowUp ? 16 : 0) + (becomesReceiver && nextReceiver ? 5 : 0) + (becomesReceiver ? escapesMarker : 0);
 }
 
 function logAiSelection<T>(game: GameState, player: { label: string }, selection: { value: T; score: number; probability: number; reason: string }, label: string) {
@@ -189,7 +270,7 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
   if (game.turn.cardsPlayed === 0) {
     choices.push({
       value: { kind: "skip-draw" },
-      score: penaltyFoulRisk || urgentShotThreat ? -100 : countedHandSize(player) <= 3 ? 2.8 : countedHandSize(player) < handLimit(game, player) ? 1.4 : -2.5,
+      score: penaltyFoulRisk || urgentShotThreat ? -100 : countedHandSize(player) <= 3 ? 6.8 : countedHandSize(player) < handLimit(game, player) ? 3.2 : -2.5,
       reason: penaltyFoulRisk ? "当前跳过会造成禁区超员犯规" : "跳过出牌阶段，再补充两张牌",
     });
   }
@@ -218,15 +299,32 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
         const ballHolderEntersEnemyPenalty = hasBall(player) &&
           !isInEnemyPenaltyArea(player.team, player.position) &&
           isInEnemyPenaltyArea(player.team, position);
+        const entersCrowdedOwnPenalty = !isInOwnPenaltyArea(player.team, player.position) &&
+          isInOwnPenaltyArea(player.team, position) &&
+          game.players.some((candidate) =>
+            candidate.id !== player.id &&
+            candidate.team === player.team &&
+            isInOwnPenaltyArea(player.team, candidate.position),
+          );
+        const responsibilityScore = player.team !== game.offense ? responsibilityMoveScore(game, player, position) : 0;
+        const urgentDefenseScore = urgentDefenseMoveScore(game, player, position);
+        const supportScore = attackingSupportMoveScore(game, player, position);
+        const exceptionalMove = collectsLooseBall || exitsCrowdedPenalty || urgentDefenseScore >= 20 || supportScore >= 18 || responsibilityScore >= 10;
+        const cardDifference = teamCardDifference(game, player);
+        const secondMovePenalty = game.turn.actionsSpent >= 1
+          ? exceptionalMove ? 3 : 13 + Math.max(0, -cardDifference) * 1.25
+          : Math.max(0, -cardDifference) * 0.35;
         movePlans.push({
           value: { kind: "move", cardId: card.id, position },
           score: scoreMove(game, player, position, card) +
             (collectsLooseBall ? 42 : 0) +
             (exitsCrowdedPenalty ? 70 : 0) -
             (ballHolderEntersEnemyPenalty ? 60 : 0) +
-            (player.team !== game.offense ? responsibilityMoveScore(game, player, position) : 0) +
-            urgentDefenseMoveScore(game, player, position) +
-            attackingSupportMoveScore(game, player, position),
+            (entersCrowdedOwnPenalty ? player.team === game.offense ? -25 : -80 : 0) +
+            responsibilityScore +
+            urgentDefenseScore +
+            supportScore -
+            secondMovePenalty,
           reason: collectsLooseBall
             ? `移动经过 ${squareName(game.looseBall!)} 争夺足球`
             : exitsCrowdedPenalty
@@ -237,7 +335,8 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
         });
       });
     });
-    choices.push(...topCandidates(movePlans));
+    const moveChoice = weightedTopBandAiChoice(movePlans, 1.15, random, 3, 4);
+    if (moveChoice) choices.push(moveChoice);
 
     if (player.team !== game.offense && actions.length > 0) {
       const suitCounts = new Map<string, number>();
@@ -247,13 +346,26 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
         .flatMap<AiCandidate<AiTurnPlan>>((target) => actions.map((costCard) => {
           const chance = 1 / target.hand.length;
           const duplicates = suitCounts.get(costCard.suit) ?? 1;
+          const cardDifference = teamCardDifference(game, player);
+          const economyPenalty = Math.max(0, -cardDifference) * 1.1 + (countedHandSize(player) <= 2 ? 4 : 0);
+          const emergencyValue = urgentShotThreat ? 10 + chance * 34 : 0;
+          const remainingActionCards = actions.filter((card) => card.id !== costCard.id).length;
+          const firstActionTempo = game.turn.actionsSpent === 0 && game.turn.actionsRemaining >= 2 ? 5 : -2;
+          const immediateOpponent = nextActor(game, player);
+          const exposedToCounterPress = immediateOpponent.team !== player.team &&
+            countedHandSize(immediateOpponent) > 0 &&
+            isAdjacent(player.position, immediateOpponent.position);
+          const strandedPenalty = remainingActionCards === 0 ? 9 : 0;
+          const counterPressPenalty = exposedToCounterPress ? (remainingActionCards === 0 ? 8 : 3) : 0;
           return {
             value: { kind: "press", cardId: costCard.id, targetId: target.id },
-            score: 2.4 + chance * 14 + duplicates * 1.8 - cardPreservationPenalty(player, costCard) * 2.2 + (urgentShotThreat ? 28 : 0),
+            score: 2.4 + chance * 14 + duplicates * 1.8 - cardPreservationPenalty(player, costCard) * 2.2 +
+              emergencyValue + firstActionTempo - economyPenalty - strandedPenalty - counterPressPenalty,
             reason: `弃置重复度较高的行动牌上抢 ${target.label}，抢到足球的估计概率 ${Math.round(chance * 100)}%`,
           };
         }));
-      choices.push(...topCandidates(pressPlans, 2));
+      const pressChoice = weightedTopBandAiChoice(pressPlans, 1.15, random, 3, 4);
+      if (pressChoice) choices.push(pressChoice);
     }
 
     if (!game.turn.tackleUsed) {
@@ -271,7 +383,8 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
                 : `尝试削弱 ${target.label} 的手牌`,
             };
           });
-        choices.push(...topCandidates(tacklePlans, 2));
+        const tackleChoice = weightedTopBandAiChoice(tacklePlans, 1.15, random, 3, 4);
+        if (tackleChoice) choices.push(tackleChoice);
       }
     }
 
@@ -287,7 +400,8 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
           score: hasBall(target) ? 20 + (urgentShotThreat ? 28 : 0) : 5.2,
           reason: hasBall(target) ? `飞踢 ${target.label} 并直接夺取足球` : `压低 ${target.label} 下回合行动力`,
       }));
-      choices.push(...topCandidates(kickPlans, 2));
+      const kickChoice = weightedTopBandAiChoice(kickPlans, 1.15, random, 3, 4);
+      if (kickChoice) choices.push(kickChoice);
     }
   }
 
@@ -296,34 +410,41 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
     actions.forEach((card) => {
       legalPassTargets(game, player, card.suit, game.turn.longPassReady).forEach((position) => {
         const directReceiver = game.players.find((target) => target.position === position && target.team === player.team);
-        const collector = directReceiver ? undefined : firstLikelyLooseBallCollector(game, player, position);
-        const ownCollector = collector?.team === player.team;
-        const plannedReceiver = directReceiver ?? (ownCollector ? collector : undefined);
-        const receiverBonus = plannedReceiver?.id === nextTeammate(game, player)?.id ? 8 : 0;
-        const looseBallScore = directReceiver ? 0 : ownCollector ? 24 : collector ? -55 : -8;
+        const race = directReceiver ? undefined : looseBallRace(game, player, position);
+        const collector = race?.receiver;
+        const ownCollector = Boolean(collector);
+        const plannedReceiver = directReceiver ?? collector;
+        const receiverBonus = plannedReceiver?.id === nextTeammate(game, player)?.id ? 5 : 0;
+        const directPassBonus = directReceiver ? 8 + defensivePressureScore(game, directReceiver, directReceiver.position) : 0;
+        const shotSetupBonus = receivingShotBonus(game, plannedReceiver, position);
+        const continuationBonus = directReceiver ? passingContinuationBonus(game, player, directReceiver, position) : 0;
+        const looseBallScore = directReceiver
+          ? 0
+          : ownCollector
+            ? 10 - (race?.interceptionRisk ?? 0) * 24
+            : -12 - (race?.interceptionRisk ?? 0) * 10;
         passPlans.push({
           value: { kind: "pass", cardId: card.id, position },
-          score: scorePassTarget(game, player, position, card) + looseBallScore + receiverBonus,
+          score: scorePassTarget(game, player, position, card) + directPassBonus + looseBallScore + receiverBonus + shotSetupBonus + continuationBonus,
           reason: isGoal(position)
             ? "线路无防守者阻挡，直接射门"
             : directReceiver
               ? `直接传给 ${directReceiver.label}`
               : ownCollector
                 ? `把足球送到 ${squareName(position)}，预计由 ${collector!.label} 先接应`
-                : collector
-                  ? `${squareName(position)} 可能被 ${collector.label} 抢先拿到，降低选择优先级`
-                  : `把足球送到 ${squareName(position)}，等待后续接应`,
+                : `把足球送到 ${squareName(position)}，等待后续接应`,
         });
       });
     });
-    choices.push(...topCandidates(passPlans));
+    const passChoice = weightedTopBandAiChoice(passPlans, 1.15, random, 3, 4);
+    if (passChoice) choices.push(passChoice);
   }
 
   // The engine is called again after every resolved action. Keeping several
   // strong candidates here therefore creates a lightweight two-step plan:
   // positioning is scored for the next pass/shot, then the new state is
   // evaluated before the remaining action point is spent.
-  const selection = weightedTopBandAiChoice(choices, 1.15, random, 3, 4);
+  const selection = weightedTopBandAiChoice(choices, 1.35, random, 5, 4);
   if (!selection) return finishPlayPhase(game);
   const labels: Record<string, string> = { "skip-draw": "战术整备", end: "结束出牌", move: "移动", tackle: "使用抢断卡", press: "近身上抢", pass: "落点传球", sprint: "冲刺", supply: "补给", "long-pass": "准备长传", "save-recycle": "更换扑救", "flying-kick": "飞踢" };
   logAiSelection(game, player, selection, labels[selection.value.kind] ?? selection.value.kind);
