@@ -1,8 +1,8 @@
-import type { AiTurnPlan, GameState } from "./types";
+import type { AiTurnPlan, GameState, Player, Suit } from "./types";
 import { AI_TUNING, GAME_BALANCE, SUIT_INFO } from "./constants";
-import { weightedAiChoice } from "./ai";
+import { gridDistance, weightedAiChoice, weightedTopBandAiChoice } from "./ai";
 import type { AiCandidate } from "./ai";
-import { isGoal, isInEnemyPenaltyArea, isInOwnPenaltyArea, movementPath } from "./game-rules";
+import { enemyGoals, isGoal, isInEnemyPenaltyArea, isInOwnPenaltyArea, movementPath, passPath } from "./game-rules";
 import {
   actionCards,
   activePlayer,
@@ -23,6 +23,7 @@ import {
   isStepAdjacent,
   legalPassTargets,
   movementTargets,
+  getTurnOrderForGame,
   playerById,
   playableCards,
   resolveFlyingKickAction,
@@ -41,6 +42,100 @@ import {
   specialCards,
   squareName,
 } from "./game-engine";
+
+const SUITS: Suit[] = ["rock", "bishop", "knight"];
+
+function topCandidates<T>(candidates: AiCandidate<T>[], count = 3) {
+  return [...candidates].sort((left, right) => right.score - left.score).slice(0, count);
+}
+
+export function defensiveResponsibilityIds(game: GameState, player: Player) {
+  const order = getTurnOrderForGame(game);
+  const start = order.indexOf(player.id);
+  const targets: string[] = [];
+  for (let offset = 1; offset < order.length; offset += 1) {
+    const candidate = playerById(game, order[(start + offset) % order.length]);
+    if (candidate.team === player.team) break;
+    targets.push(candidate.id);
+  }
+  return targets;
+}
+
+function nextTeammate(game: GameState, player: Player) {
+  const order = getTurnOrderForGame(game);
+  const start = order.indexOf(player.id);
+  for (let offset = 1; offset < order.length; offset += 1) {
+    const candidate = playerById(game, order[(start + offset) % order.length]);
+    if (candidate.team === player.team) return candidate;
+  }
+  return undefined;
+}
+
+function canCollectLooseBall(game: GameState, player: Player, landing: number, exactFriendlyKnowledge: boolean) {
+  if (countedHandSize(player) === 0) return false;
+  const suits = exactFriendlyKnowledge
+    ? [...new Set(actionCards(player).map((card) => card.suit))]
+    : SUITS;
+  return suits.some((suit) => [...movementTargets(game, player, suit)].some((destination) =>
+    movementPath(player.position, destination, suit)?.includes(landing),
+  ));
+}
+
+export function firstLikelyLooseBallCollector(game: GameState, passer: Player, landing: number) {
+  const order = getTurnOrderForGame(game);
+  const start = order.indexOf(passer.id);
+  for (let offset = 1; offset < order.length; offset += 1) {
+    const candidate = playerById(game, order[(start + offset) % order.length]);
+    if (canCollectLooseBall(game, candidate, landing, candidate.team === passer.team)) return candidate;
+  }
+  return undefined;
+}
+
+function potentialShotLanes(game: GameState, attacker: Player) {
+  if (isInEnemyPenaltyArea(attacker.team, attacker.position)) return [];
+  return SUITS.flatMap((suit) => enemyGoals(attacker.team).flatMap((goal) => {
+    const path = passPath(attacker.position, goal, suit);
+    if (!path || path.some((cell) => game.players.some((player) => player.id !== attacker.id && player.position === cell))) return [];
+    return [{ suit, goal, path }];
+  }));
+}
+
+function responsibilityMoveScore(game: GameState, player: Player, position: number) {
+  const targets = defensiveResponsibilityIds(game, player).map((id) => playerById(game, id));
+  const holder = game.players.find((candidate) => candidate.team !== player.team && hasBall(candidate));
+  return targets.reduce((score, target) => {
+    const closesTarget = gridDistance(player.position, target.position) - gridDistance(position, target.position);
+    const marksTarget = gridDistance(position, target.position) <= 1 ? 6 : 0;
+    const blocksPass = holder && SUITS.some((suit) => passPath(holder.position, target.position, suit)?.includes(position)) ? 8 : 0;
+    return score + closesTarget * 2.5 + marksTarget + blocksPass;
+  }, 0);
+}
+
+function urgentDefenseMoveScore(game: GameState, player: Player, position: number) {
+  const holder = game.players.find((candidate) => candidate.team !== player.team && hasBall(candidate));
+  if (!holder) return 0;
+  const lanes = potentialShotLanes(game, holder);
+  if (lanes.length === 0) return 0;
+  const blocks = lanes.filter((lane) => lane.path.includes(position)).length;
+  const closesHolder = gridDistance(player.position, holder.position) - gridDistance(position, holder.position);
+  return blocks * 38 + (gridDistance(position, holder.position) <= 1 ? 14 : 0) + closesHolder * 2;
+}
+
+function attackingSupportMoveScore(game: GameState, player: Player, position: number) {
+  if (player.team !== game.offense || hasBall(player)) return 0;
+  const holder = game.players.find((candidate) => candidate.team === player.team && hasBall(candidate));
+  if (!holder) return 0;
+  const simulated = structuredClone(game);
+  const simulatedPlayer = playerById(simulated, player.id);
+  simulatedPlayer.position = position;
+  const simulatedHolder = playerById(simulated, holder.id);
+  const becomesReceiver = actionCards(simulatedHolder).some((card) =>
+    legalPassTargets(simulated, simulatedHolder, card.suit, simulated.turn.longPassReady).has(position),
+  );
+  const shotFollowUp = potentialShotLanes(simulated, simulatedPlayer).length > 0;
+  const nextReceiver = nextTeammate(game, holder)?.id === player.id;
+  return (becomesReceiver ? 9 : 0) + (shotFollowUp ? 14 : 0) + (becomesReceiver && nextReceiver ? 5 : 0);
+}
 
 function logAiSelection<T>(game: GameState, player: { label: string }, selection: { value: T; score: number; probability: number; reason: string }, label: string) {
   const probability = Math.max(1, Math.round(selection.probability * 100));
@@ -61,6 +156,8 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
       candidate.team === player.team &&
       isInOwnPenaltyArea(player.team, candidate.position),
     );
+  const enemyHolder = game.players.find((candidate) => candidate.team !== player.team && hasBall(candidate));
+  const urgentShotThreat = Boolean(enemyHolder && potentialShotLanes(game, enemyHolder).length > 0);
 
   // A legal shot is never traded for a merely promising positional play. Keep
   // weighted choice only between equivalent scoring cards/goal squares.
@@ -86,13 +183,13 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
 
   choices.push({
     value: { kind: "end" },
-    score: !canAct(game) ? 10 : penaltyFoulRisk ? -100 : game.turn.actionsSpent >= 2 ? 5.2 : hasBall(player) && hasPass ? -1 : 1.3,
+    score: !canAct(game) ? 10 : penaltyFoulRisk || urgentShotThreat ? -100 : game.turn.actionsSpent >= 2 ? 5.2 : hasBall(player) && hasPass ? -1 : 1.3,
     reason: !canAct(game) ? "行动点已经用完" : penaltyFoulRisk ? "当前结束会造成禁区超员犯规" : "保留剩余手牌并结束出牌阶段",
   });
   if (game.turn.cardsPlayed === 0) {
     choices.push({
       value: { kind: "skip-draw" },
-      score: penaltyFoulRisk ? -100 : countedHandSize(player) <= 3 ? 6.2 : countedHandSize(player) < handLimit(game, player) ? 2.6 : -2.5,
+      score: penaltyFoulRisk || urgentShotThreat ? -100 : countedHandSize(player) <= 3 ? 2.8 : countedHandSize(player) < handLimit(game, player) ? 1.4 : -2.5,
       reason: penaltyFoulRisk ? "当前跳过会造成禁区超员犯规" : "跳过出牌阶段，再补充两张牌",
     });
   }
@@ -126,7 +223,10 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
           score: scoreMove(game, player, position, card) +
             (collectsLooseBall ? 42 : 0) +
             (exitsCrowdedPenalty ? 70 : 0) -
-            (ballHolderEntersEnemyPenalty ? 60 : 0),
+            (ballHolderEntersEnemyPenalty ? 60 : 0) +
+            (player.team !== game.offense ? responsibilityMoveScore(game, player, position) : 0) +
+            urgentDefenseMoveScore(game, player, position) +
+            attackingSupportMoveScore(game, player, position),
           reason: collectsLooseBall
             ? `移动经过 ${squareName(game.looseBall!)} 争夺足球`
             : exitsCrowdedPenalty
@@ -137,8 +237,7 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
         });
       });
     });
-    const moveChoice = weightedAiChoice(movePlans, AI_TUNING.detailTemperature, random);
-    if (moveChoice) choices.push({ value: moveChoice.value, score: moveChoice.score, reason: moveChoice.reason });
+    choices.push(...topCandidates(movePlans));
 
     if (player.team !== game.offense && actions.length > 0) {
       const suitCounts = new Map<string, number>();
@@ -150,12 +249,11 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
           const duplicates = suitCounts.get(costCard.suit) ?? 1;
           return {
             value: { kind: "press", cardId: costCard.id, targetId: target.id },
-            score: 2.4 + chance * 14 + duplicates * 1.8 - cardPreservationPenalty(player, costCard) * 2.2,
+            score: 2.4 + chance * 14 + duplicates * 1.8 - cardPreservationPenalty(player, costCard) * 2.2 + (urgentShotThreat ? 28 : 0),
             reason: `弃置重复度较高的行动牌上抢 ${target.label}，抢到足球的估计概率 ${Math.round(chance * 100)}%`,
           };
         }));
-      const pressChoice = weightedAiChoice(pressPlans, AI_TUNING.detailTemperature, random);
-      if (pressChoice) choices.push({ value: pressChoice.value, score: pressChoice.score, reason: pressChoice.reason });
+      choices.push(...topCandidates(pressPlans, 2));
     }
 
     if (!game.turn.tackleUsed) {
@@ -167,14 +265,13 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
             const chance = hasBall(target) ? 1 / target.hand.length : 0;
             return {
               value: { kind: "tackle", cardId: tackle.id, targetId: target.id },
-              score: 2.4 + chance * 14 + (hasBall(target) ? 3.5 : 0),
+              score: 2.4 + chance * 14 + (hasBall(target) ? 3.5 : 0) + (hasBall(target) && urgentShotThreat ? 28 : 0),
               reason: hasBall(target)
                 ? `尝试从 ${target.label} 手牌中抢到足球，估计概率 ${Math.round(chance * 100)}%`
                 : `尝试削弱 ${target.label} 的手牌`,
             };
           });
-        const tackleChoice = weightedAiChoice(tacklePlans, AI_TUNING.detailTemperature, random);
-        if (tackleChoice) choices.push({ value: tackleChoice.value, score: tackleChoice.score, reason: tackleChoice.reason });
+        choices.push(...topCandidates(tacklePlans, 2));
       }
     }
 
@@ -187,11 +284,10 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
         .filter((target) => target.team !== player.team && isStepAdjacent(player.position, target.position))
         .map<AiCandidate<AiTurnPlan>>((target) => ({
           value: { kind: "flying-kick", cardId: flyingKick.id, targetId: target.id },
-          score: hasBall(target) ? 20 : 5.2,
+          score: hasBall(target) ? 20 + (urgentShotThreat ? 28 : 0) : 5.2,
           reason: hasBall(target) ? `飞踢 ${target.label} 并直接夺取足球` : `压低 ${target.label} 下回合行动力`,
-        }));
-      const kickChoice = weightedAiChoice(kickPlans, AI_TUNING.detailTemperature, random);
-      if (kickChoice) choices.push({ value: kickChoice.value, score: kickChoice.score, reason: kickChoice.reason });
+      }));
+      choices.push(...topCandidates(kickPlans, 2));
     }
   }
 
@@ -199,22 +295,35 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
     const passPlans: AiCandidate<AiTurnPlan>[] = [];
     actions.forEach((card) => {
       legalPassTargets(game, player, card.suit, game.turn.longPassReady).forEach((position) => {
+        const directReceiver = game.players.find((target) => target.position === position && target.team === player.team);
+        const collector = directReceiver ? undefined : firstLikelyLooseBallCollector(game, player, position);
+        const ownCollector = collector?.team === player.team;
+        const plannedReceiver = directReceiver ?? (ownCollector ? collector : undefined);
+        const receiverBonus = plannedReceiver?.id === nextTeammate(game, player)?.id ? 8 : 0;
+        const looseBallScore = directReceiver ? 0 : ownCollector ? 24 : collector ? -55 : -8;
         passPlans.push({
           value: { kind: "pass", cardId: card.id, position },
-          score: scorePassTarget(game, player, position, card),
+          score: scorePassTarget(game, player, position, card) + looseBallScore + receiverBonus,
           reason: isGoal(position)
             ? "线路无防守者阻挡，直接射门"
-            : game.players.some((target) => target.position === position && target.team === player.team)
-              ? `直接传给 ${game.players.find((target) => target.position === position)?.label}`
-              : `把足球送到 ${squareName(position)}，争取下一次移动先拿到球`,
+            : directReceiver
+              ? `直接传给 ${directReceiver.label}`
+              : ownCollector
+                ? `把足球送到 ${squareName(position)}，预计由 ${collector!.label} 先接应`
+                : collector
+                  ? `${squareName(position)} 可能被 ${collector.label} 抢先拿到，降低选择优先级`
+                  : `把足球送到 ${squareName(position)}，等待后续接应`,
         });
       });
     });
-    const passChoice = weightedAiChoice(passPlans, AI_TUNING.detailTemperature, random);
-    if (passChoice) choices.push({ value: passChoice.value, score: passChoice.score, reason: passChoice.reason });
+    choices.push(...topCandidates(passPlans));
   }
 
-  const selection = weightedAiChoice(choices, AI_TUNING.turnTemperature, random);
+  // The engine is called again after every resolved action. Keeping several
+  // strong candidates here therefore creates a lightweight two-step plan:
+  // positioning is scored for the next pass/shot, then the new state is
+  // evaluated before the remaining action point is spent.
+  const selection = weightedTopBandAiChoice(choices, 1.15, random, 3, 4);
   if (!selection) return finishPlayPhase(game);
   const labels: Record<string, string> = { "skip-draw": "战术整备", end: "结束出牌", move: "移动", tackle: "使用抢断卡", press: "近身上抢", pass: "落点传球", sprint: "冲刺", supply: "补给", "long-pass": "准备长传", "save-recycle": "更换扑救", "flying-kick": "飞踢" };
   logAiSelection(game, player, selection, labels[selection.value.kind] ?? selection.value.kind);

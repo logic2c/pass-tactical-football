@@ -178,9 +178,24 @@ test("long passes may cross one player but never a second", () => {
 
 test("AI choices remain random while favoring higher board value", async () => {
   const ai = await readFile(new URL("../shared/ai.ts", import.meta.url), "utf8");
+  const engine = await readFile(new URL("../shared/ai-engine.ts", import.meta.url), "utf8");
   assert.match(ai, /Math\.exp\(Math\.max\(-16, Math\.min\(16, \(candidate\.score - maxScore\) \/ safeTemperature\)\)\)/);
   assert.match(ai, /random\(\)/);
   assert.match(ai, /goalDistance/);
+  assert.match(ai, /topBandCandidates/);
+  assert.match(engine, /weightedTopBandAiChoice\(choices, 1\.15, random, 3, 4\)/);
+});
+
+test("AI plans around turn-order responsibility, friendly hands, and loose-ball races", async () => {
+  const engine = await readFile(new URL("../shared/ai-engine.ts", import.meta.url), "utf8");
+  assert.match(engine, /export function defensiveResponsibilityIds/);
+  assert.match(engine, /if \(candidate\.team === player\.team\) break;/);
+  assert.match(engine, /candidate\.team === passer\.team/);
+  assert.match(engine, /firstLikelyLooseBallCollector\(game, player, position\)/);
+  assert.match(engine, /ownCollector \? 24 : collector \? -55 : -8/);
+  assert.match(engine, /potentialShotLanes/);
+  assert.match(engine, /urgentShotThreat \? 28 : 0/);
+  assert.doesNotMatch(engine, /weightedAiChoice\(movePlans|weightedAiChoice\(passPlans/);
 });
 
 test("AI automation covers multi-card turns and discarding without legacy pass phases", async () => {

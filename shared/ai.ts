@@ -31,6 +31,23 @@ export function weightedAiChoice<T>(
   return undefined;
 }
 
+export function topBandCandidates<T>(candidates: AiCandidate<T>[], maxGap = 3, maxCount = 4) {
+  if (candidates.length === 0) return [];
+  const sorted = [...candidates].sort((left, right) => right.score - left.score);
+  const bestScore = sorted[0].score;
+  return sorted.filter((candidate) => candidate.score >= bestScore - maxGap).slice(0, maxCount);
+}
+
+export function weightedTopBandAiChoice<T>(
+  candidates: AiCandidate<T>[],
+  temperature = 1.2,
+  random = Math.random,
+  maxGap = 3,
+  maxCount = 4,
+) {
+  return weightedAiChoice(topBandCandidates(candidates, maxGap, maxCount), temperature, random);
+}
+
 export function gridDistance(from: number, to: number) {
   const fromCoordinate = positionCoordinate(from);
   const toCoordinate = positionCoordinate(to);
