@@ -9,8 +9,17 @@ const eslintConfig = defineConfig([
   globalIgnores([
     // Default ignores of eslint-config-next:
     ".next/**",
+    ".vinext/**",
+    ".wrangler/**",
     "out/**",
     "build/**",
+    "dist/**",
+    "desktop-dist/**",
+    "release/**",
+    "outputs/**",
+    "node_modules/**",
+    "server/node_modules/**",
+    "cloudflare-types.d.ts",
     "next-env.d.ts",
   ]),
 ]);

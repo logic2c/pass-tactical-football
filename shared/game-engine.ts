@@ -1,9 +1,7 @@
 import type {
   ActionCard,
   ActionTrace,
-  AiCandidate,
   BallCard,
-  GameCard,
   GameState,
   PendingPass,
   PlayCard,
@@ -15,25 +13,31 @@ import type {
   TurnState,
   VisualEvent,
 } from "./types";
-import { GAME_BALANCE, FILES, TURN_ORDER, SUIT_INFO, SPECIAL_INFO, FORMATION, getTurnOrder, getFormation, describeTeam } from "./constants";
+import { GAME_BALANCE, FILES, SUIT_INFO, getTurnOrder, getFormation, describeTeam } from "./constants";
 import {
-  BLUE_GOAL,
-  RED_GOAL,
+  ALL_GOALS,
+  BOARD_HEIGHT,
+  BOARD_SIZE,
+  BOARD_WIDTH,
+  BLUE_GOALS,
+  RED_GOALS,
   enemyGoal,
+  enemyGoals,
+  isInEnemyPenaltyArea,
+  isInOwnPenaltyArea,
   isGoal,
   movementPath,
   movementTargets,
   passBlockerCount,
   passBlockedByPlayer,
   passPath,
+  wouldExceedDefenderPenaltyLimit,
 } from "./game-rules";
 import {
   closestDistance,
   goalDistance,
   gridDistance,
   progressGain,
-  weightedAiChoice,
-  type AiSelection,
 } from "./ai";
 
 // ── Utility ──
@@ -56,23 +60,14 @@ export function buildDeck(random = Math.random): PlayCard[] {
       cost: 1,
     })),
   );
-  const costs: Record<SpecialKind, number> = { tackle: 1, sprint: 0, supply: 1, "long-pass": 0, save: 0, "flying-kick": 1 };
-  const specials: SpecialCard[] = (Object.entries(GAME_BALANCE.specialCards) as Array<[SpecialKind, number]>).flatMap(
-    ([special, count]) => Array.from({ length: count }, (_, index) => ({
-      id: `${special}-${index + 1}`,
-      kind: "special" as const,
-      special,
-      cost: costs[special],
-    })),
-  );
-  return shuffle([...actions, ...specials], random);
+  return shuffle(actions, random);
 }
 
 export function emptyTurn(): TurnState {
-  return { actionsRemaining: 0, actionsSpent: 0, tackleUsed: false, pressUsed: false, acquiredBall: false, cardsPlayed: 0, longPassReady: false };
+  return { actionsRemaining: 0, actionsSpent: 0, tackleUsed: false, acquiredBall: false, cardsPlayed: 0, longPassReady: false };
 }
 
-export function createGame(mode: "3v3" | "4v4" = "3v3", random = Math.random): GameState {
+export function createGame(mode: "1v1" | "2v2" | "3v3" | "4v4" = "3v3", random = Math.random): GameState {
   const order = getTurnOrder(mode);
   const formation = getFormation(mode);
   const game: GameState = {
@@ -92,7 +87,7 @@ export function createGame(mode: "3v3" | "4v4" = "3v3", random = Math.random): G
     turn: emptyTurn(),
     phase: "setup",
     discardQueue: [],
-    log: ["选择你控制的球员并布阵，然后由 R1 开球。"],
+    log: ["选择你控制的球队并调整己方阵型，然后由 R1 开球。"],
     kickoffReason: "赛前布阵",
     eventSeq: 0,
     traceSeq: 0,
@@ -107,13 +102,20 @@ export function playerById(game: GameState, id: string) {
   return game.players.find((player) => player.id === id)!;
 }
 
+function gameModeFromCount(count: number): "1v1" | "2v2" | "3v3" | "4v4" {
+  if (count <= 2) return "1v1";
+  if (count <= 4) return "2v2";
+  if (count <= 6) return "3v3";
+  return "4v4";
+}
+
 export function activePlayer(game: GameState) {
-  const order = getTurnOrder(game.players.length > 6 ? "4v4" : "3v3");
+  const order = getTurnOrder(gameModeFromCount(game.players.length));
   return playerById(game, order[game.turnIndex]);
 }
 
 export function getTurnOrderForGame(game: GameState): string[] {
-  return game.players.length > 6 ? getTurnOrder("4v4") : getTurnOrder("3v3");
+  return getTurnOrder(gameModeFromCount(game.players.length));
 }
 
 export function hasBall(player: Player) {
@@ -147,7 +149,13 @@ export function countedHandSize(player: Player) {
 }
 
 export function squareName(position: number) {
-  return `${FILES[position % 8]}${8 - Math.floor(position / 8)}`;
+  if (position === BLUE_GOALS[0]) return "蓝方球门 D";
+  if (position === BLUE_GOALS[1]) return "蓝方球门 E";
+  if (position === RED_GOALS[0]) return "红方球门 D";
+  if (position === RED_GOALS[1]) return "红方球门 E";
+  const numericRank = BOARD_HEIGHT - Math.floor(position / BOARD_WIDTH);
+  const rank = numericRank === 10 ? "X" : String(numericRank);
+  return `${FILES[position % BOARD_WIDTH]}${rank}`;
 }
 
 export function addLog(game: GameState, message: string) {
@@ -183,7 +191,12 @@ export function drawInto(game: GameState, player: Player, count: number, random 
 
 export function enterCurrentTurn(game: GameState) {
   const player = activePlayer(game);
-  const order = getTurnOrderForGame(game);
+  const enteringFromInitialSetup = game.phase === "setup";
+  if (enteringFromInitialSetup) {
+    const defenders = game.players.filter((candidate) => candidate.team !== game.offense);
+    defenders.forEach((defender) => drawInto(game, defender, 1));
+    if (defenders.length > 0) addLog(game, `${describeTeam(defenders[0].team)}作为初始防守方，每名球员额外补充 1 张牌。`);
+  }
   game.phase = "turn";
   game.discardQueue = [];
   game.discardResume = undefined;
@@ -197,7 +210,6 @@ export function enterCurrentTurn(game: GameState) {
     actionsRemaining: Math.max(0, baseActions - penalty),
     actionsSpent: 0,
     tackleUsed: false,
-    pressUsed: false,
     acquiredBall: false,
     cardsPlayed: 0,
     longPassReady: false,
@@ -220,8 +232,33 @@ export function finishPlayPhase(game: GameState) {
     addLog(game, `${player.label} 进入弃牌阶段，需要将手牌弃至上限。`);
   } else {
     addLog(game, `${player.label} 完成弃牌阶段。`);
-    nextTurn(game);
+    finishTurnAfterLimits(game, player);
   }
+}
+
+export function hasDefenderPenaltyFoul(game: GameState, player: Player) {
+  if (player.team === game.offense || !isInOwnPenaltyArea(player.team, player.position)) return false;
+  return game.players.filter((candidate) =>
+    candidate.team === player.team && isInOwnPenaltyArea(player.team, candidate.position),
+  ).length > 1;
+}
+
+export function finishTurnAfterLimits(game: GameState, player: Player) {
+  if (hasDefenderPenaltyFoul(game, player)) {
+    const receiverId = nextOpponent(game, player.id, game.offense);
+    addLog(game, `${describeTeam(player.team)}禁区内仍有多名防守球员，判罚犯规。`);
+    kickoff(game, receiverId, "禁区超员犯规后开球：", player.id, true);
+    emitEvent(game, {
+      kind: "foul",
+      actorId: player.id,
+      label: `${player.label} 禁区超员犯规`,
+      result: `${describeTeam(game.offense)}获得球权，双方回到默认阵型并从中场重新开球。`,
+      tone: "failure",
+      team: player.team,
+    });
+    return;
+  }
+  nextTurn(game);
 }
 
 export function nextOpponent(game: GameState, fromId: string, team: Team) {
@@ -235,7 +272,7 @@ export function nextOpponent(game: GameState, fromId: string, team: Team) {
 }
 
 export function resetFormation(game: GameState) {
-  const formation = getFormation(game.players.length > 6 ? "4v4" : "3v3");
+  const formation = getFormation(gameModeFromCount(game.players.length));
   game.players.forEach((player) => {
     player.position = formation[player.id];
   });
@@ -253,7 +290,7 @@ export function moveBallTo(game: GameState, recipientId: string) {
   playerById(game, recipientId).hand.push(ball ?? { id: "football", kind: "ball" });
 }
 
-export function kickoff(game: GameState, receiverId: string, reason: string, endingPlayerId?: string) {
+export function kickoff(game: GameState, receiverId: string, reason: string, endingPlayerId?: string, fromMidfield = false) {
   moveBallTo(game, receiverId);
   game.offense = playerById(game, receiverId).team;
   const order = getTurnOrderForGame(game);
@@ -262,6 +299,7 @@ export function kickoff(game: GameState, receiverId: string, reason: string, end
   game.discardQueue = [];
   game.discardResume = undefined;
   resetFormation(game);
+  if (fromMidfield) playerById(game, receiverId).position = playerById(game, receiverId).team === "red" ? 44 : 35;
   addLog(game, `${reason} ${playerById(game, receiverId).label} 获得球权，双方重新布阵。`);
 
   const endingPlayer = endingPlayerId ? playerById(game, endingPlayerId) : undefined;
@@ -280,9 +318,10 @@ export function scoreGoal(
   method: "移动" | "传球",
   origin = scorer.position,
   route: number[] = [enemyGoal(scorer.team)],
+  targetGoal: number = enemyGoal(scorer.team),
 ) {
   const scorerId = scorer.id;
-  const goal = enemyGoal(scorer.team);
+  const goal = targetGoal;
   const scoringTeam = scorer.team;
   game.scores[scorer.team] += 1;
   addLog(game, `${scorer.label} 通过${method}将足球送入 ${squareName(goal)}！${describeTeam(scorer.team)}得分。`);
@@ -310,8 +349,17 @@ export function scoreGoal(
 // ── Action helpers ──
 
 export function isOwnHalf(player: Player, position: number) {
-  const row = Math.floor(position / 8);
-  return player.team === "red" ? row >= 4 : row <= 3;
+  const row = Math.floor(position / BOARD_WIDTH);
+  return player.team === "red" ? row >= BOARD_HEIGHT / 2 : row < BOARD_HEIGHT / 2;
+}
+
+export function isLegalSetupPosition(game: GameState, player: Player, position: number) {
+  return Number.isInteger(position) &&
+    position >= 0 &&
+    position < BOARD_SIZE &&
+    isOwnHalf(player, position) &&
+    !game.players.some((candidate) => candidate.id !== player.id && candidate.position === position) &&
+    !wouldExceedDefenderPenaltyLimit(game, player, position);
 }
 
 export function canAct(game: GameState) {
@@ -326,6 +374,18 @@ export function spendAction(game: GameState, cost = 1) {
   return true;
 }
 
+export function shouldAutoFinishTurn(game: GameState) {
+  if (game.phase !== "turn" || game.turn.actionsRemaining !== 0) return false;
+  return !activePlayer(game).hand.some((card) => card.kind !== "ball" && card.cost === 0);
+}
+
+export function autoFinishTurnIfNeeded(game: GameState) {
+  if (!shouldAutoFinishTurn(game)) return false;
+  addLog(game, `${activePlayer(game).label} 行动力已耗尽且没有 0 点行动力卡牌，自动进入弃牌阶段。`);
+  finishPlayPhase(game);
+  return true;
+}
+
 export function recordTrace(game: GameState, trace: Omit<ActionTrace, "id">) {
   game.traceSeq += 1;
   game.traces.push({ id: game.traceSeq, ...trace });
@@ -336,14 +396,14 @@ export function markBallAcquired(game: GameState) {
 }
 
 export function isAdjacent(left: number, right: number) {
-  const rowDistance = Math.abs(Math.floor(left / 8) - Math.floor(right / 8));
-  const colDistance = Math.abs((left % 8) - (right % 8));
+  const rowDistance = Math.abs(Math.floor(left / BOARD_WIDTH) - Math.floor(right / BOARD_WIDTH));
+  const colDistance = Math.abs((left % BOARD_WIDTH) - (right % BOARD_WIDTH));
   return Math.max(rowDistance, colDistance) === 1;
 }
 
 export function isStepAdjacent(left: number, right: number) {
-  const rowDistance = Math.abs(Math.floor(left / 8) - Math.floor(right / 8));
-  const colDistance = Math.abs((left % 8) - (right % 8));
+  const rowDistance = Math.abs(Math.floor(left / BOARD_WIDTH) - Math.floor(right / BOARD_WIDTH));
+  const colDistance = Math.abs((left % BOARD_WIDTH) - (right % BOARD_WIDTH));
   return rowDistance + colDistance === 1;
 }
 
@@ -353,13 +413,13 @@ export function exactStepPaths(game: GameState, player: Player, steps: number) {
   for (let step = 0; step < steps; step += 1) {
     const nextFrontier = new Map<number, number[]>();
     frontier.forEach((path, position) => {
-      const row = Math.floor(position / 8);
-      const col = position % 8;
+      const row = Math.floor(position / BOARD_WIDTH);
+      const col = position % BOARD_WIDTH;
       [[-1, 0], [1, 0], [0, -1], [0, 1]].forEach(([rowDelta, colDelta]) => {
         const nextRow = row + rowDelta;
         const nextCol = col + colDelta;
-        if (nextRow < 0 || nextRow > 7 || nextCol < 0 || nextCol > 7) return;
-        const next = nextRow * 8 + nextCol;
+        if (nextRow < 0 || nextRow >= BOARD_HEIGHT || nextCol < 0 || nextCol >= BOARD_WIDTH) return;
+        const next = nextRow * BOARD_WIDTH + nextCol;
         if (occupied.has(next) || isGoal(next) || nextFrontier.has(next)) return;
         nextFrontier.set(next, [...path, next]);
       });
@@ -372,12 +432,13 @@ export function exactStepPaths(game: GameState, player: Player, steps: number) {
 
 export function legalPassTargets(game: GameState, passer: Player, suit: Suit, longPass = false) {
   const targets = new Set<number>();
-  for (let position = 0; position < 64; position += 1) {
+  for (const position of [...Array.from({ length: BOARD_SIZE }, (_, index) => index), ...ALL_GOALS]) {
     if (position === passer.position) continue;
     const occupant = game.players.find((player) => player.position === position);
     if (occupant && occupant.team !== passer.team) continue;
-    if (isGoal(position) && position !== enemyGoal(passer.team)) continue;
-    if (longPass && position === enemyGoal(passer.team)) continue;
+    if (isGoal(position) && !enemyGoals(passer.team).includes(position)) continue;
+    if (isGoal(position) && isInEnemyPenaltyArea(passer.team, passer.position)) continue;
+    if (longPass && isGoal(position)) continue;
     const path = passPath(passer.position, position, suit);
     if (!path) continue;
     const blocked = longPass
@@ -388,7 +449,7 @@ export function legalPassTargets(game: GameState, passer: Player, suit: Suit, lo
 
   // Knight passes cross one orthogonal square first.
   if (suit === "knight") {
-    for (let position = 0; position < 64; position += 1) {
+    for (let position = 0; position < BOARD_SIZE; position += 1) {
       const path = passPath(passer.position, position, suit);
       if (!path?.length) continue;
       const firstPlayer = game.players.find((player) => player.position === path[0]);
@@ -401,10 +462,6 @@ export function legalPassTargets(game: GameState, passer: Player, suit: Suit, lo
 export function passRoute(from: number, to: number, suit: Suit) {
   const path = passPath(from, to, suit) ?? [];
   return [...path, to].filter((cell, index, cells) => cells.indexOf(cell) === index);
-}
-
-export function hasOffsidePlayer(game: GameState, team: Team) {
-  return game.players.some((player) => player.team === team && player.position === enemyGoal(team));
 }
 
 export function saveExtraCards(player: Player, saveCardId?: string) {
@@ -451,10 +508,6 @@ export function resolveMoveAction(game: GameState, cardId: string, position: num
     game.offense = player.team;
     markBallAcquired(game);
     addLog(game, `${player.label} 在移动途中经过 ${squareName(ballSquare)}，获得足球。`);
-  }
-  if (position === enemyGoal(player.team) && hasBall(player)) {
-    scoreGoal(game, player, "移动", from, path);
-    return true;
   }
   recordTrace(game, { actorId: player.id, team: player.team, kind: "move", from, to: position });
   emitEvent(game, {
@@ -521,31 +574,33 @@ export function resolveTackleAction(game: GameState, cardId: string, targetId: s
   return true;
 }
 
-export function resolvePressAction(game: GameState, targetId: string, random = Math.random) {
+export function resolvePressAction(game: GameState, costCardId: string, targetId: string, random = Math.random) {
   const player = activePlayer(game);
   const target = game.players.find((item) => item.id === targetId);
+  const costIndex = player.hand.findIndex((card) => card.id === costCardId && card.kind !== "ball");
   if (
     !canAct(game) ||
     player.team === game.offense ||
-    game.turn.pressUsed ||
-    GAME_BALANCE.maxPressesPerTurn < 1 ||
+    costIndex < 0 ||
     !target ||
     target.team === player.team ||
-    target.hand.length === 0 ||
+    !hasBall(target) ||
     !isAdjacent(player.position, target.position)
   ) return false;
   if (!spendAction(game, 1)) return false;
-  game.turn.pressUsed = true;
+  const [costCard] = player.hand.splice(costIndex, 1) as PlayCard[];
+  game.discard.push(costCard);
   const takenIndex = Math.floor(random() * target.hand.length);
-  const inspected = target.hand[takenIndex];
+  const [inspected] = target.hand.splice(takenIndex, 1);
   if (inspected.kind === "ball") {
-    const [ball] = target.hand.splice(takenIndex, 1);
+    const ball = inspected;
     player.hand.push(ball);
     game.offense = player.team;
     markBallAcquired(game);
-    addLog(game, `${player.label} 近身上抢 ${target.label} 并抽中足球！${remainingActionCopy(game)}`);
+    addLog(game, `${player.label} 弃置 1 张牌上抢 ${target.label} 并抽中足球！${remainingActionCopy(game)}`);
   } else {
-    addLog(game, `${player.label} 近身上抢 ${target.label}，但抽中的牌不是足球，牌已放回。`);
+    game.discard.push(inspected);
+    addLog(game, `${player.label} 弃置 1 张牌上抢 ${target.label}，并弃掉目标 1 张未知牌。`);
   }
   emitEvent(game, {
     kind: "press",
@@ -557,7 +612,7 @@ export function resolvePressAction(game: GameState, targetId: string, random = M
     label: `${player.label} 对 ${target.label} 发起上抢`,
     result: inspected.kind === "ball"
       ? `抽中足球，${describeTeam(player.team)}转为进攻。${remainingActionCopy(game)}`
-      : `抽中非足球牌，已原样放回。${remainingActionCopy(game)}`,
+      : `双方各弃置 1 张非足球牌。${remainingActionCopy(game)}`,
     tone: inspected.kind === "ball" ? "success" : "failure",
   });
   return true;
@@ -644,8 +699,8 @@ export function completePendingPass(game: GameState, prefix = "") {
   if (ballIndex < 0) return false;
   const [ball] = passer.hand.splice(ballIndex, 1) as BallCard[];
   game.pendingPass = undefined;
-  if (pending.to === enemyGoal(passer.team)) {
-    scoreGoal(game, passer, "传球", pending.from, pending.path);
+  if (isGoal(pending.to)) {
+    scoreGoal(game, passer, "传球", pending.from, pending.path, pending.to);
     return true;
   }
   if (recipient) {
@@ -673,7 +728,7 @@ export function completePendingPass(game: GameState, prefix = "") {
   return true;
 }
 
-export function resolvePassAction(game: GameState, cardId: string, position: number, humanPlayerId?: string) {
+export function resolvePassAction(game: GameState, cardId: string, position: number, humanPlayerIds?: string | string[]) {
   const passer = activePlayer(game);
   if (!hasBall(passer) || !canAct(game)) return false;
   const cardIndex = passer.hand.findIndex((card) => card.id === cardId && card.kind === "action");
@@ -688,24 +743,10 @@ export function resolvePassAction(game: GameState, cardId: string, position: num
   game.discard.push(used);
   game.turn.longPassReady = false;
 
-  if (hasOffsidePlayer(game, passer.team)) {
-    const receiverId = nextOpponent(game, passer.id, otherTeam(passer.team));
-    kickoff(game, receiverId, "越位后交换球权：", passer.id);
-    emitEvent(game, {
-      kind: "offside",
-      actorId: passer.id,
-      from,
-      to: position,
-      label: `${passer.label} 传球越位`,
-      result: `${describeTeam(otherTeam(passer.team))}获得球权并重新开球。`,
-      tone: "failure",
-    });
-    return true;
-  }
-
   game.pendingPass = { passerId: passer.id, from, to: position, suit: used.suit, path, longPass };
   const responders = eligibleSaveResponders(game, game.pendingPass);
-  const humanResponder = humanPlayerId ? responders.find((player) => player.id === humanPlayerId) : undefined;
+  const controlledIds = typeof humanPlayerIds === "string" ? [humanPlayerIds] : humanPlayerIds ?? [];
+  const humanResponder = responders.find((player) => controlledIds.includes(player.id));
   const responder = humanResponder ?? [...responders].sort((left, right) => {
     const leftDistance = Math.min(...path.map((cell) => gridDistance(left.position, cell)));
     const rightDistance = Math.min(...path.map((cell) => gridDistance(right.position, cell)));
@@ -800,7 +841,7 @@ export function discardOverflowAction(game: GameState, cardId: string) {
       game.phase = "kickoff";
       game.discardResume = undefined;
     } else {
-      nextTurn(game);
+      finishTurnAfterLimits(game, player);
     }
   }
   return true;
@@ -818,7 +859,6 @@ export function scoreMove(game: GameState, player: Player, position: number, car
   const enemies = game.players.filter((item) => item.team !== player.team).map((item) => item.position);
   const path = movementPath(player.position, position, card.suit) ?? [];
   const collectsBall = game.looseBall !== undefined && path.includes(game.looseBall);
-  if (position === enemyGoal(player.team) && (hasBall(player) || collectsBall)) return 35;
   if (collectsBall) return 16 + progressGain(player.team, player.position, position) * 1.4;
   const preservation = cardPreservationPenalty(player, card);
   if (player.team === game.offense) {
@@ -836,7 +876,7 @@ export function scoreMove(game: GameState, player: Player, position: number, car
 }
 
 export function scorePassTarget(game: GameState, passer: Player, position: number, card: ActionCard) {
-  if (position === enemyGoal(passer.team)) return 38 - cardPreservationPenalty(passer, card);
+  if (isGoal(position)) return 38 - cardPreservationPenalty(passer, card);
   const recipient = game.players.find((player) => player.position === position && player.team === passer.team);
   if (recipient) {
     const progress = progressGain(passer.team, passer.position, recipient.position);

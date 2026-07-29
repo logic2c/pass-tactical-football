@@ -1,5 +1,5 @@
 import type { SessionCommand, SessionSnapshot, SessionTransport } from "@/shared/types";
-import type { GameAction, GameState, Team } from "@/shared/types";
+import type { GameAction, GameState } from "@/shared/types";
 import {
   createGame,
   resolveMoveAction,
@@ -19,9 +19,9 @@ import {
   addLog,
   emitEvent,
   activePlayer,
+  autoFinishTurnIfNeeded,
   enterCurrentTurn,
   resetFormation,
-  playerById,
 } from "@/shared/game-engine";
 import { runAiStep } from "@/shared/ai-engine";
 import { GAME_BALANCE, describeTeam } from "@/shared/constants";
@@ -45,7 +45,7 @@ export class LocalSessionTransport implements SessionTransport<GameState> {
 
     // For local transport, handle non-game commands as well
     if (command.type === "game-command") {
-      this.executeAction(state, action);
+      if (this.executeAction(state, action)) autoFinishTurnIfNeeded(state);
     } else if (command.type === "reset-game") {
       const next = createGame();
       next.players.forEach((p) => drawInto(next, p, GAME_BALANCE.startingHand));
@@ -87,7 +87,7 @@ export class LocalSessionTransport implements SessionTransport<GameState> {
       case "move": return resolveMoveAction(game, action.cardId, action.position);
       case "pass": return resolvePassAction(game, action.cardId, action.position, this.humanPlayerId);
       case "tackle": return resolveTackleAction(game, action.cardId, action.targetId);
-      case "press": return resolvePressAction(game, action.targetId);
+      case "press": return resolvePressAction(game, action.cardId, action.targetId);
       case "flying-kick": return resolveFlyingKickAction(game, action.cardId, action.targetId);
       case "sprint": return resolveSprintAction(game, action.cardId);
       case "supply": return resolveSupplyAction(game, action.cardId);
@@ -103,7 +103,7 @@ export class LocalSessionTransport implements SessionTransport<GameState> {
         addLog(game, `${player.label} 跳过出牌阶段，额外抽取 ${GAME_BALANCE.skipPlayDraw} 张牌。`);
         emitEvent(game, {
           kind: "skip-draw", actorId: player.id,
-          label: `${player.label} 选择蓄力`,
+          label: `${player.label} 选择战术整备`,
           result: `跳过出牌阶段，额外抽取 ${GAME_BALANCE.skipPlayDraw} 张未知牌。`, tone: "neutral",
         });
         finishPlayPhase(game);

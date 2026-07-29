@@ -1,9 +1,11 @@
 export type Team = "red" | "blue";
 export type Suit = "rock" | "bishop" | "knight";
+export type BoardMode = "1v1" | "2v2" | "3v3" | "4v4";
+export type RoomMode = BoardMode | "3v3-duel" | "4v4-duo";
 export type SpecialKind = "tackle" | "sprint" | "supply" | "long-pass" | "save" | "flying-kick";
 export type Phase = "setup" | "turn" | "save-response" | "discard" | "kickoff" | "gameover";
 export type ActionMode = "move" | "pass" | "tackle" | "press" | "flying-kick" | null;
-export type VisualEventKind = "move" | "pass" | "press" | "tackle" | "sprint" | "supply" | "long-pass" | "save" | "flying-kick" | "offside" | "skip-draw" | "end" | "discard" | "goal" | "kickoff";
+export type VisualEventKind = "move" | "pass" | "press" | "tackle" | "sprint" | "supply" | "long-pass" | "save" | "flying-kick" | "foul" | "skip-draw" | "end" | "discard" | "goal" | "kickoff";
 
 export type VisualEvent = {
   id: number;
@@ -59,7 +61,6 @@ export type TurnState = {
   actionsRemaining: number;
   actionsSpent: number;
   tackleUsed: boolean;
-  pressUsed: boolean;
   acquiredBall: boolean;
   cardsPlayed: number;
   longPassReady: boolean;
@@ -104,7 +105,7 @@ export type AiTurnPlan =
   | { kind: "end" }
   | { kind: "move"; cardId: string; position: number }
   | { kind: "tackle"; cardId: string; targetId: string }
-  | { kind: "press"; targetId: string }
+  | { kind: "press"; cardId: string; targetId: string }
   | { kind: "pass"; cardId: string; position: number }
   | { kind: "sprint"; cardId: string }
   | { kind: "supply"; cardId: string }
@@ -117,7 +118,7 @@ export type GameAction =
   | { kind: "move"; cardId: string; position: number }
   | { kind: "pass"; cardId: string; position: number }
   | { kind: "tackle"; cardId: string; targetId: string }
-  | { kind: "press"; targetId: string }
+  | { kind: "press"; cardId: string; targetId: string }
   | { kind: "flying-kick"; cardId: string; targetId: string }
   | { kind: "sprint"; cardId: string }
   | { kind: "supply"; cardId: string }
@@ -128,7 +129,7 @@ export type GameAction =
   | { kind: "save-response"; extraCardIds: string[]; destination: number }
   | { kind: "decline-save" }
   | { kind: "discard"; cardId: string }
-  | { kind: "setup-position"; position: number }
+  | { kind: "setup-position"; actorId: string; position: number }
   | { kind: "confirm-kickoff" };
 
 // Session transport types
@@ -157,6 +158,7 @@ export type PlayerSlot = {
   playerId: string;
   displayName: string;
   positionId: string | null;
+  positionIds: string[];
   team: Team | null;
   isHost: boolean;
   isReady: boolean;
@@ -168,8 +170,9 @@ export type RoomState = {
   roomCode: string;
   status: RoomStatus;
   slots: PlayerSlot[];
-  gameMode: "3v3" | "4v4";
-  playerSlotsPerTeam: 3 | 4;
+  gameMode: RoomMode;
+  boardMode: BoardMode;
+  playerSlotsPerTeam: 1 | 2 | 3 | 4;
   createdAt: number;
   gameState?: GameState;
   winner?: Team;

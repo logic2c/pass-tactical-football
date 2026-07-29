@@ -2,11 +2,12 @@ import type { AiTurnPlan, GameState } from "./types";
 import { AI_TUNING, GAME_BALANCE, SUIT_INFO } from "./constants";
 import { weightedAiChoice } from "./ai";
 import type { AiCandidate } from "./ai";
-import { enemyGoal, movementPath } from "./game-rules";
+import { isGoal, isInEnemyPenaltyArea, isInOwnPenaltyArea, movementPath } from "./game-rules";
 import {
   actionCards,
   activePlayer,
   addLog,
+  autoFinishTurnIfNeeded,
   canAct,
   cardPreservationPenalty,
   countedHandSize,
@@ -53,16 +54,46 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
   const actions = actionCards(player);
   const choices: AiCandidate<AiTurnPlan>[] = [];
   const hasPass = hasBall(player) && actions.some((card) => legalPassTargets(game, player, card.suit, game.turn.longPassReady).size > 0);
+  const penaltyFoulRisk = player.team !== game.offense &&
+    isInOwnPenaltyArea(player.team, player.position) &&
+    game.players.some((candidate) =>
+      candidate.id !== player.id &&
+      candidate.team === player.team &&
+      isInOwnPenaltyArea(player.team, candidate.position),
+    );
+
+  // A legal shot is never traded for a merely promising positional play. Keep
+  // weighted choice only between equivalent scoring cards/goal squares.
+  if (hasBall(player) && canAct(game)) {
+    const goalPlans: AiCandidate<AiTurnPlan>[] = [];
+    actions.forEach((card) => {
+      legalPassTargets(game, player, card.suit, game.turn.longPassReady).forEach((position) => {
+        if (!isGoal(position)) return;
+        goalPlans.push({
+          value: { kind: "pass", cardId: card.id, position },
+          score: scorePassTarget(game, player, position, card),
+          reason: "线路无防守者阻挡，直接射门",
+        });
+      });
+    });
+    const goalChoice = weightedAiChoice(goalPlans, AI_TUNING.detailTemperature, random);
+    if (goalChoice?.value.kind === "pass") {
+      logAiSelection(game, player, goalChoice, "射门");
+      if (!resolvePassAction(game, goalChoice.value.cardId, goalChoice.value.position, humanPlayerIds)) finishPlayPhase(game);
+      return;
+    }
+  }
+
   choices.push({
     value: { kind: "end" },
-    score: !canAct(game) ? 10 : game.turn.actionsSpent >= 2 ? 5.2 : hasBall(player) && hasPass ? -1 : 1.3,
-    reason: !canAct(game) ? "行动点已经用完" : "保留剩余手牌并结束出牌阶段",
+    score: !canAct(game) ? 10 : penaltyFoulRisk ? -100 : game.turn.actionsSpent >= 2 ? 5.2 : hasBall(player) && hasPass ? -1 : 1.3,
+    reason: !canAct(game) ? "行动点已经用完" : penaltyFoulRisk ? "当前结束会造成禁区超员犯规" : "保留剩余手牌并结束出牌阶段",
   });
   if (game.turn.cardsPlayed === 0) {
     choices.push({
       value: { kind: "skip-draw" },
-      score: countedHandSize(player) <= 3 ? 6.2 : countedHandSize(player) < handLimit(game, player) ? 2.6 : -2.5,
-      reason: "跳过出牌阶段，再补充两张牌",
+      score: penaltyFoulRisk ? -100 : countedHandSize(player) <= 3 ? 6.2 : countedHandSize(player) < handLimit(game, player) ? 2.6 : -2.5,
+      reason: penaltyFoulRisk ? "当前跳过会造成禁区超员犯规" : "跳过出牌阶段，再补充两张牌",
     });
   }
 
@@ -84,11 +115,24 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
     const movePlans: AiCandidate<AiTurnPlan>[] = [];
     actions.forEach((card) => {
       movementTargets(game, player, card.suit).forEach((position) => {
+        const path = movementPath(player.position, position, card.suit) ?? [];
+        const collectsLooseBall = game.looseBall !== undefined && path.includes(game.looseBall);
+        const exitsCrowdedPenalty = penaltyFoulRisk && !isInOwnPenaltyArea(player.team, position);
+        const ballHolderEntersEnemyPenalty = hasBall(player) &&
+          !isInEnemyPenaltyArea(player.team, player.position) &&
+          isInEnemyPenaltyArea(player.team, position);
         movePlans.push({
           value: { kind: "move", cardId: card.id, position },
-          score: scoreMove(game, player, position, card),
-          reason: game.looseBall !== undefined && (movementPath(player.position, position, card.suit) ?? []).includes(game.looseBall)
-            ? `移动经过 ${squareName(game.looseBall)} 争夺足球`
+          score: scoreMove(game, player, position, card) +
+            (collectsLooseBall ? 42 : 0) +
+            (exitsCrowdedPenalty ? 70 : 0) -
+            (ballHolderEntersEnemyPenalty ? 60 : 0),
+          reason: collectsLooseBall
+            ? `移动经过 ${squareName(game.looseBall!)} 争夺足球`
+            : exitsCrowdedPenalty
+              ? `离开己方禁区，避免禁区超员犯规`
+              : ballHolderEntersEnemyPenalty
+                ? `进入对方禁区会失去直接射门空间`
             : `${player.team === game.offense ? "推进" : "回防"}到 ${squareName(position)}`,
         });
       });
@@ -96,19 +140,20 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
     const moveChoice = weightedAiChoice(movePlans, AI_TUNING.detailTemperature, random);
     if (moveChoice) choices.push({ value: moveChoice.value, score: moveChoice.score, reason: moveChoice.reason });
 
-    if (player.team !== game.offense && !game.turn.pressUsed) {
+    if (player.team !== game.offense && actions.length > 0) {
+      const suitCounts = new Map<string, number>();
+      actions.forEach((card) => suitCounts.set(card.suit, (suitCounts.get(card.suit) ?? 0) + 1));
       const pressPlans = game.players
-        .filter((target) => target.team !== player.team && target.hand.length > 0 && isAdjacent(player.position, target.position))
-        .map<AiCandidate<AiTurnPlan>>((target) => {
-          const chance = hasBall(target) ? 1 / target.hand.length : 0;
+        .filter((target) => target.team !== player.team && hasBall(target) && isAdjacent(player.position, target.position))
+        .flatMap<AiCandidate<AiTurnPlan>>((target) => actions.map((costCard) => {
+          const chance = 1 / target.hand.length;
+          const duplicates = suitCounts.get(costCard.suit) ?? 1;
           return {
-            value: { kind: "press", targetId: target.id },
-            score: 2.8 + chance * 11 + (hasBall(target) ? 3 : 0),
-            reason: hasBall(target)
-              ? `近身上抢 ${target.label}，抢到足球的估计概率 ${Math.round(chance * 100)}%`
-              : `无卡试探 ${target.label} 的手牌`,
+            value: { kind: "press", cardId: costCard.id, targetId: target.id },
+            score: 2.4 + chance * 14 + duplicates * 1.8 - cardPreservationPenalty(player, costCard) * 2.2,
+            reason: `弃置重复度较高的行动牌上抢 ${target.label}，抢到足球的估计概率 ${Math.round(chance * 100)}%`,
           };
-        });
+        }));
       const pressChoice = weightedAiChoice(pressPlans, AI_TUNING.detailTemperature, random);
       if (pressChoice) choices.push({ value: pressChoice.value, score: pressChoice.score, reason: pressChoice.reason });
     }
@@ -157,7 +202,7 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
         passPlans.push({
           value: { kind: "pass", cardId: card.id, position },
           score: scorePassTarget(game, player, position, card),
-          reason: position === enemyGoal(player.team)
+          reason: isGoal(position)
             ? "线路无防守者阻挡，直接射门"
             : game.players.some((target) => target.position === position && target.team === player.team)
               ? `直接传给 ${game.players.find((target) => target.position === position)?.label}`
@@ -171,7 +216,7 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
 
   const selection = weightedAiChoice(choices, AI_TUNING.turnTemperature, random);
   if (!selection) return finishPlayPhase(game);
-  const labels: Record<string, string> = { "skip-draw": "蓄力抽牌", end: "结束出牌", move: "移动", tackle: "使用抢断卡", press: "近身上抢", pass: "落点传球", sprint: "冲刺", supply: "补给", "long-pass": "准备长传", "save-recycle": "更换扑救", "flying-kick": "飞踢" };
+  const labels: Record<string, string> = { "skip-draw": "战术整备", end: "结束出牌", move: "移动", tackle: "使用抢断卡", press: "近身上抢", pass: "落点传球", sprint: "冲刺", supply: "补给", "long-pass": "准备长传", "save-recycle": "更换扑救", "flying-kick": "飞踢" };
   logAiSelection(game, player, selection, labels[selection.value.kind] ?? selection.value.kind);
   const plan = selection.value;
   if (plan.kind === "skip-draw") {
@@ -180,7 +225,7 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
     emitEvent(game, {
       kind: "skip-draw",
       actorId: player.id,
-      label: `${player.label} 选择蓄力`,
+      label: `${player.label} 选择战术整备`,
       result: `跳过出牌阶段，额外抽取 ${GAME_BALANCE.skipPlayDraw} 张未知牌。`,
       tone: "neutral",
     });
@@ -199,7 +244,7 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
   } else if (plan.kind === "tackle") {
     if (!resolveTackleAction(game, plan.cardId, plan.targetId, random)) finishPlayPhase(game);
   } else if (plan.kind === "press") {
-    if (!resolvePressAction(game, plan.targetId, random)) finishPlayPhase(game);
+    if (!resolvePressAction(game, plan.cardId, plan.targetId, random)) finishPlayPhase(game);
   } else if (plan.kind === "sprint") {
     if (!resolveSprintAction(game, plan.cardId)) finishPlayPhase(game);
   } else if (plan.kind === "supply") {
@@ -210,12 +255,13 @@ export function runAiTurn(game: GameState, humanPlayerIds: string[], random = Ma
     if (!resolveSaveRecycle(game, plan.cardId, random)) finishPlayPhase(game);
   } else if (plan.kind === "flying-kick") {
     if (!resolveFlyingKickAction(game, plan.cardId, plan.targetId)) finishPlayPhase(game);
-  } else if (!resolvePassAction(game, plan.cardId, plan.position, humanPlayerIds[0])) {
+  } else if (!resolvePassAction(game, plan.cardId, plan.position, humanPlayerIds)) {
     finishPlayPhase(game);
   }
+  autoFinishTurnIfNeeded(game);
 }
 
-export function runAiSaveResponse(game: GameState, _random = Math.random) {
+export function runAiSaveResponse(game: GameState) {
   const pending = game.pendingPass;
   if (!pending?.responderId) return;
   const responder = playerById(game, pending.responderId);
@@ -278,7 +324,7 @@ export function runAiStep(game: GameState, humanPlayerIds: string[], random = Ma
   const actorId = phaseActorId(game);
   if (!actorId || humanPlayerIds.includes(actorId)) return false;
   if (game.phase === "turn") runAiTurn(game, humanPlayerIds, random);
-  else if (game.phase === "save-response") runAiSaveResponse(game, random);
+  else if (game.phase === "save-response") runAiSaveResponse(game);
   else if (game.phase === "discard") runAiDiscard(game, random);
   else return false;
   return true;

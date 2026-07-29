@@ -6,6 +6,9 @@ export function getWsUrl(): string {
   }
   // In production, connect to same host via /ws path (nginx proxy)
   if (typeof window !== "undefined") {
+    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+      return `ws://${window.location.hostname}:8080`;
+    }
     const protocol = window.location.protocol === "https:" ? "wss" : "ws";
     return `${protocol}://${window.location.host}/ws`;
   }

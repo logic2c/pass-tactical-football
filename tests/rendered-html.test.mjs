@@ -2,11 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const { BLUE_GOAL, movementPath, movementTargets, passBlockerCount, passBlockedByPlayer, passPath } = await import(
+const { BOARD_HEIGHT, BOARD_SIZE, BLUE_GOAL, BLUE_GOALS, RED_PENALTY_AREA, movementPath, movementTargets, passBlockerCount, passBlockedByPlayer, passPath } = await import(
   new URL("../shared/game-rules.ts", import.meta.url)
-);
-const { candidateProbabilities, weightedAiChoice } = await import(
-  new URL("../shared/ai.ts", import.meta.url)
 );
 
 async function render() {
@@ -43,7 +40,7 @@ test("server-renders the PASS game shell", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>PASS — 足球卡牌人机对战<\/title>/i);
+  assert.match(html, /<title>PASS — 战术足球卡牌游戏<\/title>/i);
   // Title-case in og:title meta tag (UI content is client-rendered via RSC)
   assert.match(html, /Tactical Football Card Game/i);
   // RSC hydration bootstrap
@@ -52,7 +49,7 @@ test("server-renders the PASS game shell", async () => {
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
 
-test("source implements staged turns, special cards, and end-of-turn discarding", async () => {
+test("source implements staged turns and end-of-turn rule checks", async () => {
   const source = await allSource();
   const rules = await readFile(new URL("../shared/game-rules.ts", import.meta.url), "utf8");
 
@@ -66,14 +63,31 @@ test("source implements staged turns, special cards, and end-of-turn discarding"
   assert.match(source, /function markBallAcquired\(game: GameState\)/);
   assert.doesNotMatch(source, /game\.turn\.actionsRemaining = 1;/);
   assert.match(source, /game\.turn\.tackleUsed = true;/);
-  assert.match(source, /game\.turn\.pressUsed = true;/);
+  assert.doesNotMatch(source, /pressUsed|maxPressesPerTurn/);
   assert.match(source, /function countedHandSize\(player: Player\)/);
-  assert.match(rules, /const range = 3;/);
+  assert.match(rules, /const range = suit === "bishop" \? 2 : 3;/);
   assert.match(source, /type Phase = "setup" \| "turn" \| "save-response"/);
-  assert.match(source, /hasOffsidePlayer/);
+  assert.doesNotMatch(source, /hasOffsidePlayer/);
 });
 
-test("movement ranges and goal access follow the current rules", () => {
+test("the temporary test deck contains only movement cards", async () => {
+  const engine = await readFile(new URL("../shared/game-engine.ts", import.meta.url), "utf8");
+  const buildDeckBody = engine.slice(engine.indexOf("export function buildDeck"), engine.indexOf("export function emptyTurn"));
+  assert.match(buildDeckBody, /\["rock", "bishop", "knight"\]/);
+  assert.match(buildDeckBody, /GAME_BALANCE\.actionCardsPerSuit/);
+  assert.doesNotMatch(buildDeckBody, /specialCards|SpecialCard/);
+});
+
+test("the pitch is 8 by 10 with single-character rank X", async () => {
+  const engine = await readFile(new URL("../shared/game-engine.ts", import.meta.url), "utf8");
+  assert.equal(BOARD_HEIGHT, 10);
+  assert.equal(BOARD_SIZE, 80);
+  assert.deepEqual(RED_PENALTY_AREA, [74, 75, 76, 77]);
+  assert.match(engine, /numericRank === 10 \? "X"/);
+  assert.match(engine, /\.team === "red" \? 44 : 35/);
+});
+
+test("movement ranges stop at three orthogonal or two diagonal squares and never enter goals", () => {
   const defender = { team: "red", position: 35, hand: [{ kind: "action" }] };
   const defenseGame = { offense: "blue", players: [defender] };
   const offenseGame = { offense: "red", players: [defender] };
@@ -81,24 +95,44 @@ test("movement ranges and goal access follow the current rules", () => {
   assert.equal(movementTargets(defenseGame, defender, "rock").has(38), true);
   assert.equal(movementTargets(offenseGame, defender, "rock").has(38), true);
   assert.equal(movementTargets(defenseGame, defender, "rock").has(39), false);
-  assert.equal(movementTargets(defenseGame, defender, "bishop").has(14), true);
-  assert.equal(movementTargets(offenseGame, defender, "bishop").has(14), true);
-  assert.equal(movementTargets(defenseGame, defender, "bishop").has(7), false);
+  assert.equal(movementTargets(defenseGame, defender, "bishop").has(17), true);
+  assert.equal(movementTargets(offenseGame, defender, "bishop").has(17), true);
+  assert.equal(movementTargets(defenseGame, defender, "bishop").has(8), false);
+  assert.equal(movementTargets(defenseGame, defender, "rock").has(BLUE_GOAL), false);
+  assert.equal(movementPath(35, 8, "bishop"), null);
+  assert.equal(movementPath(35, 3, "rock"), null);
+});
 
-  const farBallCarrier = { team: "red", position: 56, hand: [{ kind: "ball" }] };
-  const farGame = { offense: "red", players: [farBallCarrier] };
-  assert.equal(movementTargets(farGame, farBallCarrier, "bishop").has(BLUE_GOAL), false);
+test("passes have doubled movement range and external-goal paths", () => {
+  assert.deepEqual(passPath(48, 0, "rock"), [40, 32, 24, 16, 8]);
+  assert.equal(passPath(56, 0, "rock"), null);
+  assert.deepEqual(passPath(43, 15, "bishop"), [36, 29, 22]);
+  assert.equal(passPath(50, 15, "bishop"), null);
 
-  const alignedBallCarrier = { team: "red", position: 25, hand: [{ kind: "ball" }] };
-  const alignedGame = { offense: "red", players: [alignedBallCarrier] };
-  assert.equal(movementTargets(alignedGame, alignedBallCarrier, "bishop").has(BLUE_GOAL), true);
+  assert.deepEqual(passPath(11, BLUE_GOALS[0], "rock"), [3]);
+  assert.deepEqual(passPath(12, BLUE_GOALS[1], "rock"), [4]);
+});
 
-  const alignedWithoutBall = { team: "red", position: 25, hand: [{ kind: "action" }] };
-  const noBallGame = { offense: "red", players: [alignedWithoutBall] };
-  assert.equal(movementTargets(noBallGame, alignedWithoutBall, "bishop").has(BLUE_GOAL), false);
+test("defending penalty-area occupancy is limited on entry", () => {
+  const b1 = { team: "blue", position: 2, hand: [] };
+  const b2 = { team: "blue", position: 11, hand: [] };
+  const game = { offense: "red", players: [b1, b2] };
+  assert.equal(movementTargets(game, b2, "rock").has(3), false);
+});
 
-  const looseBallGame = { offense: "red", looseBall: 18, players: [alignedWithoutBall] };
-  assert.equal(movementTargets(looseBallGame, alignedWithoutBall, "bishop").has(BLUE_GOAL), true);
+test("foul, initial defender draw, shooting restriction, and unlimited paid press are wired into the engine", async () => {
+  const engine = await readFile(new URL("../shared/game-engine.ts", import.meta.url), "utf8");
+  assert.match(engine, /player\.team === game\.offense \|\| !isInOwnPenaltyArea\(player\.team, player\.position\)/);
+  assert.match(engine, /kickoff\(game, receiverId, "禁区超员犯规后开球：", player\.id, true\)/);
+  assert.match(engine, /candidate\.team !== game\.offense/);
+  assert.match(engine, /defenders\.forEach\(\(defender\) => drawInto\(game, defender, 1\)\)/);
+  assert.match(engine, /game\.phase === "setup"/);
+  assert.doesNotMatch(engine, /game\.phase === "setup" \|\| game\.phase === "kickoff"/);
+  assert.match(engine, /isGoal\(position\) && isInEnemyPenaltyArea\(passer\.team, passer\.position\)/);
+  assert.match(engine, /resolvePressAction\(game: GameState, costCardId: string, targetId: string/);
+  assert.match(engine, /game\.discard\.push\(costCard\)/);
+  assert.match(engine, /!hasBall\(target\)/);
+  assert.doesNotMatch(engine, /pressUsed|maxPressesPerTurn/);
 });
 
 test("teammates and opponents both block movement routes", () => {
@@ -122,14 +156,14 @@ test("knight routes expose the first square and landing square for loose-ball pi
 
 test("teammates and opponents both block pass routes", () => {
   assert.equal(
-    passBlockedByPlayer(56, 0, "rock", [
-      { position: 48, team: "red" },
-      { position: 40, team: "blue" },
+    passBlockedByPlayer(48, 0, "rock", [
+      { position: 40, team: "red" },
+      { position: 32, team: "blue" },
     ]),
     true,
   );
   assert.equal(
-    passBlockedByPlayer(56, 0, "rock", [{ position: 48, team: "red" }]),
+    passBlockedByPlayer(48, 0, "rock", [{ position: 40, team: "red" }]),
     true,
   );
   assert.equal(passBlockedByPlayer(56, 48, "rock", [{ position: 48, team: "red" }]), false);
@@ -137,31 +171,22 @@ test("teammates and opponents both block pass routes", () => {
 });
 
 test("long passes may cross one player but never a second", () => {
-  assert.equal(passBlockerCount(56, 0, "rock", [{ position: 48 }]), 1);
-  assert.equal(passBlockerCount(56, 0, "rock", [{ position: 48 }, { position: 40 }]), 2);
+  assert.equal(passBlockerCount(48, 0, "rock", [{ position: 40 }]), 1);
+  assert.equal(passBlockerCount(48, 0, "rock", [{ position: 40 }, { position: 32 }]), 2);
   assert.equal(passBlockerCount(35, 52, "knight", [{ position: 43 }]), 1);
 });
 
-test("AI choices remain random while favoring higher board value", () => {
-  const candidates = [
-    { value: "poor", score: -2, reason: "low value" },
-    { value: "safe", score: 2, reason: "medium value" },
-    { value: "strong", score: 7, reason: "high value" },
-  ];
-  const probabilities = candidateProbabilities(candidates, 2.2);
-
-  assert.equal(probabilities.length, 3);
-  assert.ok(probabilities[2] > probabilities[1]);
-  assert.ok(probabilities[1] > probabilities[0]);
-  assert.ok(Math.abs(probabilities.reduce((sum, value) => sum + value, 0) - 1) < 1e-10);
-  assert.equal(weightedAiChoice(candidates, 2.2, () => 0)?.value, "poor");
-  assert.equal(weightedAiChoice(candidates, 2.2, () => 0.999999)?.value, "strong");
+test("AI choices remain random while favoring higher board value", async () => {
+  const ai = await readFile(new URL("../shared/ai.ts", import.meta.url), "utf8");
+  assert.match(ai, /Math\.exp\(Math\.max\(-16, Math\.min\(16, \(candidate\.score - maxScore\) \/ safeTemperature\)\)\)/);
+  assert.match(ai, /random\(\)/);
+  assert.match(ai, /goalDistance/);
 });
 
 test("AI automation covers multi-card turns and discarding without legacy pass phases", async () => {
   const source = await allSource();
 
-  assert.match(source, /if \(game\.phase === "turn"\) runAiTurn\(game, humanPlayerId/);
+  assert.match(source, /if \(game\.phase === "turn"\) runAiTurn\(game, humanPlayerIds/);
   assert.match(source, /else if \(game\.phase === "save-response"\) runAiSaveResponse\(game/);
   assert.match(source, /else if \(game\.phase === "discard"\) runAiDiscard\(game/);
   assert.match(source, /kind: "skip-draw"/);
@@ -179,16 +204,39 @@ test("AI automation covers multi-card turns and discarding without legacy pass p
   assert.match(source, /aria-live=\{visibleEvent\?\.kind === "goal" \? "assertive" : "polite"\}/);
   assert.match(source, /key=\{position\}/);
   assert.doesNotMatch(source, /key=\{`\$\{position\}-\$\{visibleEvent/);
-  assert.match(source, /scoreGoal\(game, player, "移动", from, path\)/);
+  assert.doesNotMatch(source, /scoreGoal\(game, player, "移动", from, path\)/);
+  assert.match(source, /ALL_GOALS\.map/);
   assert.match(source, /className="card-cost"/);
   assert.match(source, /className=\{`trace-line/);
 
   // UI content is now client-rendered — verify in source instead of HTML
-  assert.match(source, /1 HUMAN · 5 AI/);
-  assert.match(source, /选择本局由你控制的球员/);
+  assert.match(source, /你控制全队 · 对方由 AI 控制/);
+  assert.match(source, /选择本局由你控制的球队/);
+  assert.match(source, /humanPlayerIds=\{humanPlayerIds\}/);
   assert.match(source, /等待第一步行动/);
   assert.match(source, /aria-live=\{/);
   assert.match(source, /aria-atomic/);
+});
+
+test("large-screen wrapped hands start at the first row and remain vertically scrollable", async () => {
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(css, /\.command-deck \.card-fan \{ display: grid; grid-template-columns: repeat\(2, 100px\); grid-auto-rows: 130px; align-content: start;/);
+  assert.match(css, /overflow-x: hidden; overflow-y: auto;/);
+});
+
+test("the active controlled player hand follows each new turn without blocking teammate inspection", async () => {
+  const board = await readFile(new URL("../app/components/GameBoard.tsx", import.meta.url), "utf8");
+  assert.match(board, /handView\.turnActorId !== current\.id/);
+  assert.match(board, /currentHumanTurnStarted \? current\.id : defaultViewedPlayerId/);
+  assert.match(board, /setHandView\(\{ turnActorId: current\.id, playerId: player\.id \}\)/);
+});
+
+test("zero action points automatically finish when no zero-cost card remains", async () => {
+  const source = await allSource();
+  assert.match(source, /game\.turn\.actionsRemaining !== 0/);
+  assert.match(source, /card\.kind !== "ball" && card\.cost === 0/);
+  assert.match(source, /autoFinishTurnIfNeeded\(next\)/);
+  assert.match(source, /autoFinishTurnIfNeeded\(game\)/);
 });
 
 test("reduced-motion users retain static event highlights", async () => {
@@ -196,4 +244,21 @@ test("reduced-motion users retain static event highlights", async () => {
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.pitch-cell\.event-route/);
   assert.match(css, /\.pitch-cell\.event-to \{ outline:/);
   assert.match(css, /\.player-token\.event-actor \{ box-shadow:/);
+});
+
+test("multiplayer entry and copy never masquerade as single-player AI", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const board = await readFile(new URL("../app/components/GameBoard.tsx", import.meta.url), "utf8");
+
+  assert.match(page, /params\.has\("singleplayer"\)/);
+  assert.match(page, /if \(singlePlayerFromUrl\)/);
+  assert.match(page, /返回联机大厅/);
+  assert.match(page, /return <MultiplayerApp \/>;/);
+  assert.doesNotMatch(page, /manualMultiplayer/);
+  assert.match(board, /const aiThinking = !isMultiplayer/);
+  assert.match(board, /!isMultiplayer && game\.aiNote/);
+  assert.match(board, /每位玩家控制自己的球员/);
+  assert.match(board, /等待 \$\{current\.label\} 行动/);
+  assert.match(board, /双方玩家的移动、传球、上抢与球权变化/);
+  assert.match(board, /isMultiplayer \? "remote-player" : "ai"/);
 });

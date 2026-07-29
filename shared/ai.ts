@@ -1,4 +1,5 @@
 import type { AiCandidate, AiSelection } from "./types";
+import { BLUE_GOALS, RED_GOALS, positionCoordinate } from "./game-rules";
 
 export type { AiCandidate, AiSelection };
 
@@ -31,15 +32,17 @@ export function weightedAiChoice<T>(
 }
 
 export function gridDistance(from: number, to: number) {
-  const fromRow = Math.floor(from / 8);
-  const fromCol = from % 8;
-  const toRow = Math.floor(to / 8);
-  const toCol = to % 8;
+  const fromCoordinate = positionCoordinate(from);
+  const toCoordinate = positionCoordinate(to);
+  if (!fromCoordinate || !toCoordinate) return Number.POSITIVE_INFINITY;
+  const { row: fromRow, col: fromCol } = fromCoordinate;
+  const { row: toRow, col: toCol } = toCoordinate;
   return Math.abs(fromRow - toRow) + Math.abs(fromCol - toCol);
 }
 
 export function goalDistance(team: "red" | "blue", position: number) {
-  return gridDistance(position, team === "red" ? 4 : 60);
+  const goals = team === "red" ? BLUE_GOALS : RED_GOALS;
+  return Math.min(...goals.map((goal) => gridDistance(position, goal)));
 }
 
 export function progressGain(team: "red" | "blue", from: number, to: number) {

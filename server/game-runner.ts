@@ -20,12 +20,14 @@ import {
   addLog,
   emitEvent,
   activePlayer,
+  autoFinishTurnIfNeeded,
   playerById,
+  isLegalSetupPosition,
 } from "../shared/game-engine";
 import { runAiStep, phaseActorId } from "../shared/ai-engine";
-import { GAME_BALANCE, AI_TUNING, describeTeam } from "../shared/constants";
+import { GAME_BALANCE, describeTeam } from "../shared/constants";
 import type { Room } from "./room";
-import { findSlot, toRoomState } from "./room";
+import { controlledPositionIds, findSlot, slotControls } from "./room";
 
 type BroadcastFn = (room: Room) => void;
 
@@ -43,13 +45,18 @@ export class GameRunner {
   }
 
   startGame(room: Room) {
-    const game = createGame(room.gameMode);
+    const game = createGame(room.boardMode);
     room.gameState = game;
     room.revision = 0;
 
-    // Assign player positions to the game's players based on room slots
-    const activeSlots = room.slots.filter((s) => !s.isSpectator);
-    // Game already creates players with correct positions from formation
+    // Bind room seats to game actors and keep the chosen display names in all events/logs.
+    room.slots.filter((slot) => !slot.isSpectator).forEach((slot) => {
+      const ownedIds = controlledPositionIds(slot);
+      ownedIds.forEach((actorId) => {
+        const gamePlayer = game.players.find((player) => player.id === actorId);
+        if (gamePlayer) gamePlayer.label = ownedIds.length > 1 ? `${slot.displayName} · ${actorId.toUpperCase()}` : slot.displayName;
+      });
+    });
 
     this.broadcast(room);
     this.scheduleAiIfNeeded(room);
@@ -69,7 +76,7 @@ export class GameRunner {
         return { ok: false, error: "NOT_SETUP_PHASE" };
       }
       // Validate the player owns this game position (slot.positionId matches game player ID)
-      const gamePlayer = game.players.find((p) => p.id === slot.positionId);
+      const gamePlayer = game.players.find((p) => p.id === action.actorId && slotControls(slot, action.actorId));
       if (!gamePlayer) {
         return { ok: false, error: "NOT_YOUR_PLAYER" };
       }
@@ -77,23 +84,24 @@ export class GameRunner {
       if (game.phase !== "setup" && game.phase !== "kickoff") {
         return { ok: false, error: "NOT_SETUP_OR_KICKOFF" };
       }
-      // Only host can confirm kickoff
-      if (!slot.isHost) {
-        return { ok: false, error: "NOT_HOST" };
+      // Initial setup is started by the host; later kickoffs are confirmed by the receiver.
+      if ((game.phase === "setup" && !slot.isHost) || (game.phase === "kickoff" && !slotControls(slot, activePlayer(game).id))) {
+        return { ok: false, error: game.phase === "setup" ? "NOT_HOST" : "NOT_KICKOFF_RECEIVER" };
       }
     } else {
       const actorId = phaseActorId(game);
-      if (actorId !== slot.positionId) {
+      if (!actorId || !slotControls(slot, actorId)) {
         return { ok: false, error: "NOT_YOUR_TURN" };
       }
     }
 
     // Validate the specific action
-    const player = game.players.find((p) => p.id === slot.positionId);
-    if (!player) return { ok: false, error: "PLAYER_NOT_FOUND" };
+    const ownedIds = controlledPositionIds(slot);
+    if (ownedIds.length === 0) return { ok: false, error: "PLAYER_NOT_FOUND" };
 
-    const result = this.executeAction(game, action, player.id);
+    const result = this.executeAction(game, action, ownedIds);
     if (!result) return { ok: false, error: "INVALID_ACTION" };
+    autoFinishTurnIfNeeded(game);
 
     room.revision++;
     this.clearTimer(room.roomCode);
@@ -101,16 +109,16 @@ export class GameRunner {
     return { ok: true };
   }
 
-  private executeAction(game: GameState, action: GameAction, playerId: string): boolean {
+  private executeAction(game: GameState, action: GameAction, controlledIds: string[]): boolean {
     switch (action.kind) {
       case "move":
         return resolveMoveAction(game, action.cardId, action.position);
       case "pass":
-        return resolvePassAction(game, action.cardId, action.position, playerId);
+        return resolvePassAction(game, action.cardId, action.position, controlledIds);
       case "tackle":
         return resolveTackleAction(game, action.cardId, action.targetId);
       case "press":
-        return resolvePressAction(game, action.targetId);
+        return resolvePressAction(game, action.cardId, action.targetId);
       case "flying-kick":
         return resolveFlyingKickAction(game, action.cardId, action.targetId);
       case "sprint":
@@ -129,7 +137,7 @@ export class GameRunner {
         emitEvent(game, {
           kind: "skip-draw",
           actorId: player.id,
-          label: `${player.label} 选择蓄力`,
+          label: `${player.label} 选择战术整备`,
           result: `跳过出牌阶段，额外抽取 ${GAME_BALANCE.skipPlayDraw} 张未知牌。`,
           tone: "neutral",
         });
@@ -156,8 +164,10 @@ export class GameRunner {
         return discardOverflowAction(game, action.cardId);
       case "setup-position": {
         if (game.phase !== "setup" && game.phase !== "kickoff") return false;
-        const selected = playerById(game, playerId);
+        if (!controlledIds.includes(action.actorId)) return false;
+        const selected = playerById(game, action.actorId);
         if (!selected) return false;
+        if (!isLegalSetupPosition(game, selected, action.position)) return false;
         selected.position = action.position;
         return true;
       }
@@ -189,6 +199,7 @@ export class GameRunner {
     if (game.phase === "gameover") {
       room.status = "finished";
       room.winner = game.winner;
+      room.finishedAt ??= Date.now();
       this.broadcast(room);
       return;
     }
@@ -197,7 +208,7 @@ export class GameRunner {
     if (!actorId) return;
 
     // Check if current actor is human (connected and not spectator)
-    const slot = room.slots.find((s) => s.positionId === actorId && !s.isSpectator);
+    const slot = room.slots.find((s) => !s.isSpectator && slotControls(s, actorId));
     if (slot?.isConnected) {
       // Human player's turn — set timeout for AFK
       const timeout = game.phase === "save-response" ? SAVE_TIMEOUT
@@ -225,7 +236,7 @@ export class GameRunner {
     const actorId = phaseActorId(game);
     if (!actorId) return;
 
-    const slot = room.slots.find((s) => s.positionId === actorId);
+    const slot = room.slots.find((s) => slotControls(s, actorId));
     if (!slot?.isConnected) return; // Already disconnected
 
     // Auto-action on timeout
@@ -244,7 +255,7 @@ export class GameRunner {
       declineSaveResponse(game);
     } else if (game.phase === "discard") {
       // AI will auto-discard; just trigger the next step
-      const humanIds = room.slots.filter((s) => s.isConnected && !s.isSpectator).map((s) => s.positionId!).filter(Boolean);
+      const humanIds = room.slots.filter((s) => s.isConnected && !s.isSpectator).flatMap(controlledPositionIds);
       runAiStep(game, humanIds);
     }
 
@@ -257,8 +268,8 @@ export class GameRunner {
     if (!game) return;
 
     const humanIds = room.slots
-      .filter((s) => s.isConnected && !s.isSpectator && s.positionId)
-      .map((s) => s.positionId!);
+      .filter((s) => s.isConnected && !s.isSpectator)
+      .flatMap(controlledPositionIds);
 
     runAiStep(game, humanIds);
     room.revision++;

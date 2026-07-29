@@ -1,18 +1,23 @@
 import type { Suit, SpecialKind, Team } from "./types";
 
+export const TURN_ORDER_1V1 = ["r1", "b1"];
+export const TURN_ORDER_2V2 = ["r1", "b1", "r2", "b2"];
 export const TURN_ORDER = ["r1", "b1", "r2", "b2", "r3", "b3"];
 export const TURN_ORDER_4V4 = ["r1", "b1", "r2", "b2", "r3", "b3", "r4", "b4"];
 
 export const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"];
 
-export function getTurnOrder(mode: "3v3" | "4v4") {
-  return mode === "4v4" ? TURN_ORDER_4V4 : TURN_ORDER;
+export function getTurnOrder(mode: "1v1" | "2v2" | "3v3" | "4v4") {
+  if (mode === "4v4") return TURN_ORDER_4V4;
+  if (mode === "2v2") return TURN_ORDER_2V2;
+  if (mode === "1v1") return TURN_ORDER_1V1;
+  return TURN_ORDER;
 }
 
 export const SUIT_INFO: Record<Suit, { name: string; icon: string; caption: string }> = {
   rock: { name: "ROCK", icon: "+", caption: "横纵" },
   bishop: { name: "BISHOP", icon: "×", caption: "斜线" },
-  knight: { name: "KNIGHT", icon: "L", caption: "走日" },
+  knight: { name: "KNIGHT", icon: "♞", caption: "先直后斜" },
 };
 
 export const SPECIAL_INFO: Record<SpecialKind, { name: string; icon: string; caption: string; description: string }> = {
@@ -24,28 +29,43 @@ export const SPECIAL_INFO: Record<SpecialKind, { name: string; icon: string; cap
   "flying-kick": { name: "FLYING KICK", icon: "−1", caption: "飞踢", description: "一步内压制并夺球" },
 };
 
+export const FORMATION_1V1: Record<string, number> = {
+  r1: 68,
+  b1: 12,
+};
+
+export const FORMATION_2V2: Record<string, number> = {
+  r1: 68,
+  r2: 60,
+  b1: 12,
+  b2: 20,
+};
+
 export const FORMATION_3V3: Record<string, number> = {
-  r1: 51,
-  r2: 53,
-  r3: 44,
-  b1: 11,
-  b2: 13,
-  b3: 20,
+  r1: 67,
+  r2: 69,
+  r3: 60,
+  b1: 12,
+  b2: 10,
+  b3: 19,
 };
 
 export const FORMATION_4V4: Record<string, number> = {
-  r1: 51,
-  r2: 58,
-  r3: 53,
-  r4: 43,
+  r1: 67,
+  r2: 74,
+  r3: 69,
+  r4: 59,
   b1: 11,
   b2: 2,
   b3: 13,
   b4: 19,
 };
 
-export function getFormation(mode: "3v3" | "4v4") {
-  return mode === "4v4" ? FORMATION_4V4 : FORMATION_3V3;
+export function getFormation(mode: "1v1" | "2v2" | "3v3" | "4v4") {
+  if (mode === "4v4") return FORMATION_4V4;
+  if (mode === "2v2") return FORMATION_2V2;
+  if (mode === "1v1") return FORMATION_1V1;
+  return FORMATION_3V3;
 }
 
 export const FORMATION = FORMATION_3V3;
@@ -59,7 +79,6 @@ export const GAME_BALANCE = {
   handLimit: { offense: 5, defense: 6 },
   winningScore: 3,
   maxTacklesPerTurn: 1,
-  maxPressesPerTurn: 1,
   actionPoints: { holder: 1, other: 2 },
 } as const;
 

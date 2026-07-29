@@ -10,17 +10,17 @@ export async function generateMetadata(): Promise<Metadata> {
   const socialImage = new URL("/og.png", base).toString();
   return {
     metadataBase: base,
-    title: "PASS — 足球卡牌人机对战",
-    description: "行动力、长传、扑救响应与落地球争夺：选择一名球员，与五名收益加权决策的 AI 对战。",
+    title: "PASS — 战术足球卡牌游戏",
+    description: "行动力、长传、扑救响应与落地球争夺：支持网页联机与单人人机试玩。",
     openGraph: {
       title: "PASS — Tactical Football Card Game",
-      description: "一名玩家与五名 AI：行动力卡牌、长传扑救、轨迹箭头与三球决胜。",
+      description: "网页联机战术足球卡牌游戏：行动力卡牌、长传扑救、轨迹箭头与三球决胜。",
       images: [{ url: socialImage, width: 1731, height: 909, alt: "PASS 足球卡牌策略游戏" }],
     },
     twitter: {
       card: "summary_large_image",
       title: "PASS — Tactical Football Card Game",
-      description: "一名玩家与五名 AI：行动力卡牌、长传扑救、轨迹箭头与三球决胜。",
+      description: "网页联机战术足球卡牌游戏：行动力卡牌、长传扑救、轨迹箭头与三球决胜。",
       images: [socialImage],
     },
   };

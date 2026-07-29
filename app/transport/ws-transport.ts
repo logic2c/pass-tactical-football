@@ -6,7 +6,7 @@ export class WebSocketTransport implements SessionTransport<GameState> {
   private listeners = new Set<(snapshot: SessionSnapshot<GameState>) => void>();
   private revision = 0;
   private url: string;
-  private playerId: string;
+  private reconnectToken: string;
   private roomCode: string;
   private onDisconnect: () => void;
   private onReconnect: () => void;
@@ -17,13 +17,13 @@ export class WebSocketTransport implements SessionTransport<GameState> {
 
   constructor(
     url: string,
-    playerId: string,
+    reconnectToken: string,
     roomCode: string,
     onDisconnect: () => void,
     onReconnect: () => void,
   ) {
     this.url = url;
-    this.playerId = playerId;
+    this.reconnectToken = reconnectToken;
     this.roomCode = roomCode;
     this.onDisconnect = onDisconnect;
     this.onReconnect = onReconnect;
@@ -31,8 +31,7 @@ export class WebSocketTransport implements SessionTransport<GameState> {
   }
 
   private connect() {
-    const wsUrl = `${this.url}?room=${this.roomCode}&player=${this.playerId}`;
-    this.ws = new WebSocket(wsUrl);
+    this.ws = new WebSocket(this.url);
 
     this.ws.onopen = () => {
       if (this.reconnectAttempts > 0) {
@@ -40,7 +39,7 @@ export class WebSocketTransport implements SessionTransport<GameState> {
         // Send rejoin message
         this.sendRaw({
           type: "join-room",
-          payload: { roomCode: this.roomCode, playerId: this.playerId, displayName: "" },
+          payload: { roomCode: this.roomCode, reconnectToken: this.reconnectToken, displayName: "" },
         });
       }
       this.reconnectAttempts = 0;

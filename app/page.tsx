@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useState, useMemo, useRef, useCallback } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback, useSyncExternalStore } from "react";
+import Link from "next/link";
 import type {
   ActionMode,
   GameAction,
   GameState,
   RoomState,
+  Team,
 } from "@/shared/types";
 import {
   AI_TUNING,
@@ -15,8 +17,7 @@ import {
 import {
   activePlayer,
   addLog,
-  canAct,
-  completePendingPass,
+  autoFinishTurnIfNeeded,
   createGame,
   declineSaveResponse,
   discardOverflowAction,
@@ -24,11 +25,7 @@ import {
   emitEvent,
   enterCurrentTurn,
   finishPlayPhase,
-  hasBall,
-  isGoal,
-  isOwnHalf,
-  moveBallTo,
-  otherTeam,
+  isLegalSetupPosition,
   playerById,
   resetFormation,
   resolveFlyingKickAction,
@@ -62,7 +59,7 @@ const SKIP_PLAY_DRAW = GAME_BALANCE.skipPlayDraw;
 function getRoomFromURL(): string | null {
   if (typeof window === "undefined") return null;
   const params = new URLSearchParams(window.location.search);
-  return params.get("room") || params.get("multiplayer");
+  return params.get("room");
 }
 
 function MultiplayerApp() {
@@ -70,12 +67,15 @@ function MultiplayerApp() {
   const [mode] = useState<"create" | "join">(roomCode ? "join" : "create");
   const [phase, setPhase] = useState<"lobby" | "playing">("lobby");
   const [gameState, setGameState] = useState<GameState | null>(null);
-  const [myPlayerId, setMyPlayerId] = useState("");       // UUID from server
-  const [myPositionId, setMyPositionId] = useState("");    // Game player ID like "r1"
+  const [myPositionIds, setMyPositionIds] = useState<string[]>([]);
+  const myPositionId = myPositionIds[0] ?? "";
+  const [isHost, setIsHost] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
-  const roomCodeRef = useRef<string>("");
+  const sessionRef = useRef({ playerId: "", roomCode: "", reconnectToken: "" });
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const disposedRef = useRef(false);
   const reconnectAttemptsRef = useRef(0);
-  const maxReconnectAttempts = 20;
+  const maxReconnectAttempts = 30;
   const [reconnecting, setReconnecting] = useState(false);
   const [reconnectMsg, setReconnectMsg] = useState("");
 
@@ -85,76 +85,89 @@ function MultiplayerApp() {
   const [setupPlayerId, setSetupPlayerId] = useState("");
   const [saveDiscardIds, setSaveDiscardIds] = useState<string[]>([]);
 
-  /** Set up onmessage to handle game-state from room-state messages */
-  function setupGameStateListener(ws: WebSocket, playerId: string) {
-    const originalOnMessage = ws.onmessage;
-    ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data as string);
-      if (msg.type === "room-state") {
-        const state = msg.payload as RoomState;
-        if (state.gameState) {
-          setGameState(state.gameState);
-        }
-        const mySlot = state.slots?.find((s: { playerId: string }) => s.playerId === playerId);
-        if (mySlot?.positionId) {
-          setMyPositionId(mySlot.positionId);
-        }
-      } else if (msg.type === "game-state") {
-        setGameState(msg.payload);
-      }
-      // Forward to original handler if any
-      if (originalOnMessage && originalOnMessage !== ws.onmessage) {
-        originalOnMessage.call(ws, event);
-      }
-    };
+  function rememberSession(playerId: string, room: string, reconnectToken: string) {
+    sessionRef.current = { playerId, roomCode: room, reconnectToken };
+    try { sessionStorage.setItem("pass-playerId", playerId); } catch { /* storage unavailable */ }
+    try { sessionStorage.setItem("pass-roomCode", room); } catch { /* storage unavailable */ }
+    try { sessionStorage.setItem("pass-reconnectToken", reconnectToken); } catch { /* storage unavailable */ }
   }
 
-  /** Set up reconnection handler on the WebSocket */
-  function setupReconnectHandler(ws: WebSocket, playerId: string, room: string) {
-    ws.onclose = () => {
-      if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
-        setReconnecting(false);
-        setReconnectMsg("重连失败，请刷新页面重新加入。");
-        return;
-      }
+  function applyRoomState(state: RoomState) {
+    if (state.gameState) setGameState(state.gameState);
+    const mySlot = state.slots.find((slot) => slot.playerId === sessionRef.current.playerId);
+    if (mySlot?.positionId) {
+      const ownedIds = mySlot.positionIds.length > 0 ? mySlot.positionIds : [mySlot.positionId];
+      setMyPositionIds(ownedIds);
+      setSetupPlayerId((currentId) => ownedIds.includes(currentId) ? currentId : ownedIds[0]);
+    }
+    if (mySlot) setIsHost(mySlot.isHost);
+  }
 
-      setReconnecting(true);
-      setReconnectMsg(`连接断开，正在重连 (${reconnectAttemptsRef.current + 1}/${maxReconnectAttempts})...`);
+  function scheduleReconnect(closedSocket: WebSocket) {
+    if (disposedRef.current || wsRef.current !== closedSocket) return;
+    if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
+      setReconnecting(false);
+      setReconnectMsg("自动重连未成功，你可以继续手动重试。");
+      return;
+    }
+    const attempt = reconnectAttemptsRef.current + 1;
+    const delay = Math.min(800 * Math.pow(1.45, reconnectAttemptsRef.current), 8000);
+    reconnectAttemptsRef.current = attempt;
+    setReconnecting(true);
+    setReconnectMsg(`连接中断，正在恢复对局（${attempt}/${maxReconnectAttempts}）`);
+    reconnectTimerRef.current = setTimeout(openResumeSocket, delay);
+  }
 
-      const delay = Math.min(2000 * Math.pow(1.5, reconnectAttemptsRef.current), 10000);
-      reconnectAttemptsRef.current++;
-
-      setTimeout(() => {
-        const newWs = new WebSocket(getWsUrl());
-        newWs.onopen = () => {
-          // Rejoin the room with existing playerId
-          newWs.send(JSON.stringify({
-            type: "join-room",
-            payload: {
-              roomCode: room,
-              displayName: "",
-              playerId: playerId,
-            },
-          }));
-        };
-
-        newWs.onmessage = (event) => {
-          const msg = JSON.parse(event.data as string);
-          if (msg.type === "welcome") {
-            // Reconnected successfully
-            reconnectAttemptsRef.current = 0;
-            setReconnecting(false);
-            wsRef.current = newWs;
-            setupGameStateListener(newWs, playerId);
-            setupReconnectHandler(newWs, playerId, room);
-          }
-        };
-
-        newWs.onerror = () => {
-          // Will trigger onclose
-        };
-      }, delay);
+  function bindGameSocket(socket: WebSocket, resume: boolean) {
+    wsRef.current = socket;
+    socket.onopen = () => {
+      if (!resume) return;
+      const session = sessionRef.current;
+      socket.send(JSON.stringify({
+        type: "join-room",
+        payload: {
+          roomCode: session.roomCode,
+          reconnectToken: session.reconnectToken,
+          displayName: "",
+        },
+      }));
     };
+    socket.onmessage = (event) => {
+      if (wsRef.current !== socket) return;
+      try {
+        const msg = JSON.parse(event.data as string);
+        if (msg.type === "welcome") {
+          const token = String(msg.payload.reconnectToken || sessionRef.current.reconnectToken);
+          rememberSession(String(msg.payload.playerId), String(msg.payload.roomCode), token);
+          reconnectAttemptsRef.current = 0;
+          setReconnecting(false);
+          setReconnectMsg("");
+        } else if (msg.type === "room-state") {
+          applyRoomState(msg.payload as RoomState);
+        } else if (msg.type === "game-state") {
+          setGameState(msg.payload as GameState);
+        } else if (msg.type === "error") {
+          setReconnecting(false);
+          setReconnectMsg(String(msg.payload?.message || "连接出现问题，请重试。"));
+        }
+      } catch {
+        setReconnectMsg("收到的比赛状态无法解析，正在重新连接。");
+        socket.close();
+      }
+    };
+    socket.onclose = () => scheduleReconnect(socket);
+    socket.onerror = () => { /* close event owns retry scheduling */ };
+  }
+
+  function openResumeSocket() {
+    if (disposedRef.current) return;
+    const session = sessionRef.current;
+    if (!session.playerId || !session.roomCode || !session.reconnectToken) {
+      setReconnecting(false);
+      setReconnectMsg("没有找到可恢复的对局凭证，请从邀请链接重新加入。");
+      return;
+    }
+    bindGameSocket(new WebSocket(getWsUrl()), true);
   }
 
   function handleLobbyReady(transport: {
@@ -162,19 +175,24 @@ function MultiplayerApp() {
     sendRoomAction: (type: string, payload: unknown) => void;
     playerId: string;
     roomCode: string;
+    reconnectToken: string;
+    myPositionIds: string[];
+    isHost: boolean;
+    initialGameState?: GameState;
   }) {
-    setMyPlayerId(transport.playerId);
-    setSetupPlayerId(transport.playerId);
+    setMyPositionIds(transport.myPositionIds);
+    setSetupPlayerId(transport.myPositionIds[0] ?? "");
+    setIsHost(transport.isHost);
     wsRef.current = transport.ws;
-    roomCodeRef.current = transport.roomCode;
     reconnectAttemptsRef.current = 0;
+    rememberSession(transport.playerId, transport.roomCode, transport.reconnectToken);
 
-    // Store for reconnection
-    try { sessionStorage.setItem("pass-playerId", transport.playerId); } catch { /* */ }
-    try { sessionStorage.setItem("pass-roomCode", transport.roomCode); } catch { /* */ }
+    // Apply the already-received game state immediately
+    if (transport.initialGameState) {
+      setGameState(transport.initialGameState);
+    }
 
-    setupGameStateListener(transport.ws, transport.playerId);
-    setupReconnectHandler(transport.ws, transport.playerId, transport.roomCode);
+    bindGameSocket(transport.ws, false);
     setPhase("playing");
   }
 
@@ -183,34 +201,19 @@ function MultiplayerApp() {
     reconnectAttemptsRef.current = 0;
     setReconnecting(true);
     setReconnectMsg("手动重连中...");
-
-    const playerId = myPlayerId || (() => { try { return sessionStorage.getItem("pass-playerId") || ""; } catch { return ""; } })();
-    const room = roomCodeRef.current || (() => { try { return sessionStorage.getItem("pass-roomCode") || ""; } catch { return ""; } })();
-
-    if (!playerId || !room) {
-      setReconnectMsg("未找到会话信息，请刷新页面重新加入。");
-      return;
-    }
-
-    const newWs = new WebSocket(getWsUrl());
-    newWs.onopen = () => {
-      newWs.send(JSON.stringify({
-        type: "join-room",
-        payload: { roomCode: room, displayName: "", playerId },
-      }));
-    };
-    newWs.onmessage = (event) => {
-      const msg = JSON.parse(event.data as string);
-      if (msg.type === "welcome") {
-        reconnectAttemptsRef.current = 0;
-        setReconnecting(false);
-        wsRef.current = newWs;
-        if (!myPlayerId) setMyPlayerId(playerId);
-        setupGameStateListener(newWs, playerId);
-        setupReconnectHandler(newWs, playerId, room);
-      }
-    };
+    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+    openResumeSocket();
   }
+
+  useEffect(() => () => {
+    disposedRef.current = true;
+    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+    const socket = wsRef.current;
+    if (socket) {
+      socket.onclose = null;
+      socket.close();
+    }
+  }, []);
 
   // Send a game command through WebSocket
   const sendGameCommand = useCallback((action: GameAction) => {
@@ -229,18 +232,17 @@ function MultiplayerApp() {
 
     if (game.phase === "setup" || game.phase === "kickoff") {
       const selected = playerById(game, setupPlayerId);
-      if (selected.id !== myPositionId || isGoal(position) || !isOwnHalf(selected, position)) return;
-      if (game.players.some((p) => p.position === position && p.id !== selected.id)) return;
-      sendGameCommand({ kind: "setup-position", position });
+      if (!myPositionIds.includes(selected.id) || !isLegalSetupPosition(game, selected, position)) return;
+      sendGameCommand({ kind: "setup-position", actorId: selected.id, position });
       return;
     }
 
     const current = activePlayer(game);
-    const humanTurn = game.phase === "turn" && current.id === myPositionId;
+    const humanTurn = game.phase === "turn" && myPositionIds.includes(current.id);
     const responsePlayer = game.phase === "save-response" && game.pendingPass?.responderId
       ? playerById(game, game.pendingPass.responderId)
       : undefined;
-    const humanSaveResponse = game.phase === "save-response" && responsePlayer?.id === myPositionId;
+    const humanSaveResponse = game.phase === "save-response" && Boolean(responsePlayer && myPositionIds.includes(responsePlayer.id));
 
     if (!humanTurn && !humanSaveResponse) return;
 
@@ -258,8 +260,8 @@ function MultiplayerApp() {
       sendGameCommand({ kind: "tackle", cardId: selectedCard.id, targetId: target.id });
     } else if (actionMode === "flying-kick" && target && selectedCard?.kind === "special") {
       sendGameCommand({ kind: "flying-kick", cardId: selectedCard.id, targetId: target.id });
-    } else if (actionMode === "press" && target) {
-      sendGameCommand({ kind: "press", targetId: target.id });
+    } else if (actionMode === "press" && target && selectedCard) {
+      sendGameCommand({ kind: "press", cardId: selectedCard.id, targetId: target.id });
     }
 
     clearSelections();
@@ -348,6 +350,7 @@ function MultiplayerApp() {
       <GameBoard
         game={gameState}
         humanPlayerId={myPositionId}
+        humanPlayerIds={myPositionIds}
         selectedCardId={selectedCardId}
         setSelectedCardId={(id) => { setSelectedCardId(id); setActionMode(null); }}
         actionMode={actionMode}
@@ -367,6 +370,7 @@ function MultiplayerApp() {
         onDiscardOverflow={handleDiscardOverflow}
         onRestartGame={() => {}}
         isMultiplayer
+        canConfirmKickoff={gameState.phase === "setup" ? isHost : myPositionIds.includes(activePlayer(gameState).id)}
       />
       <ReconnectOverlay visible={showReconnect} message={reconnectMsg} onRetry={handleManualReconnect} />
     </div>
@@ -377,7 +381,7 @@ function MultiplayerApp() {
 
 function SinglePlayerGame() {
   const [game, setGame] = useState<GameState>(() => createGame());
-  const [humanPlayerId, setHumanPlayerId] = useState("r1");
+  const [humanTeam, setHumanTeam] = useState<Team>("red");
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [actionMode, setActionMode] = useState<ActionMode>(null);
   const [setupPlayerId, setSetupPlayerId] = useState("r1");
@@ -385,32 +389,15 @@ function SinglePlayerGame() {
 
   const actorId = phaseActorId(game);
   const current = activePlayer(game);
-  const humanTurn = game.phase === "turn" && current.id === humanPlayerId;
+  const humanPlayerIds = useMemo(
+    () => game.players.filter((player) => player.team === humanTeam).map((player) => player.id),
+    [game.players, humanTeam],
+  );
+  const humanPlayerId = humanPlayerIds[0];
+  const isHumanControlled = useCallback((playerId: string) => humanPlayerIds.includes(playerId), [humanPlayerIds]);
+  const humanTurn = game.phase === "turn" && isHumanControlled(current.id);
 
-  // AI execution
-  useEffect(() => {
-    if (!actorId || actorId === humanPlayerId) return;
-    const delay = game.phase === "turn" || game.phase === "save-response"
-      ? AI_TUNING.thinkDelay.turn
-      : AI_TUNING.thinkDelay.phase;
-    const timer = window.setTimeout(() => {
-      setGame((previous) => {
-        const expected = phaseActorId(previous);
-        if (!expected || expected === humanPlayerId || expected !== actorId) return previous;
-        const next = structuredClone(previous);
-        return runAiStep(next, [humanPlayerId]) ? next : previous;
-      });
-    }, delay);
-    return () => window.clearTimeout(timer);
-  }, [game, actorId, humanPlayerId]);
-
-  function clearSelections() {
-    setSelectedCardId(null);
-    setActionMode(null);
-    setSaveDiscardIds([]);
-  }
-
-  function startKickoff() {
+  const startKickoff = useCallback(() => {
     setGame((previous) => {
       const next = structuredClone(previous);
       enterCurrentTurn(next);
@@ -426,7 +413,45 @@ function SinglePlayerGame() {
       });
       return next;
     });
-    clearSelections();
+    setSelectedCardId(null);
+    setActionMode(null);
+    setSaveDiscardIds([]);
+  }, []);
+
+  // AI execution
+  useEffect(() => {
+    if (!actorId || isHumanControlled(actorId)) return;
+    const delay = game.phase === "turn" || game.phase === "save-response"
+      ? AI_TUNING.thinkDelay.turn
+      : AI_TUNING.thinkDelay.phase;
+    const timer = window.setTimeout(() => {
+      setGame((previous) => {
+        const expected = phaseActorId(previous);
+        if (!expected || isHumanControlled(expected) || expected !== actorId) return previous;
+        const next = structuredClone(previous);
+        return runAiStep(next, humanPlayerIds) ? next : previous;
+      });
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [game, actorId, humanPlayerIds, isHumanControlled]);
+
+  useEffect(() => {
+    if (game.phase !== "kickoff" || activePlayer(game).team === humanTeam) return;
+    const timer = window.setTimeout(() => startKickoff(), AI_TUNING.thinkDelay.phase);
+    return () => window.clearTimeout(timer);
+  }, [game, humanTeam, startKickoff]);
+
+  function clearSelections() {
+    setSelectedCardId(null);
+    setActionMode(null);
+    setSaveDiscardIds([]);
+  }
+
+  function applyTurnAction(previous: GameState, action: (next: GameState) => boolean) {
+    const next = structuredClone(previous);
+    if (!action(next)) return previous;
+    autoFinishTurnIfNeeded(next);
+    return next;
   }
 
   function resetPositions() {
@@ -440,8 +465,9 @@ function SinglePlayerGame() {
 
   function chooseHumanPlayer(playerId: string) {
     if (game.phase !== "setup") return;
-    setHumanPlayerId(playerId);
-    setSetupPlayerId(playerId);
+    const team = playerById(game, playerId).team;
+    setHumanTeam(team);
+    setSetupPlayerId(game.players.find((player) => player.team === team)!.id);
     clearSelections();
   }
 
@@ -455,7 +481,7 @@ function SinglePlayerGame() {
       emitEvent(next, {
         kind: "skip-draw",
         actorId: player.id,
-        label: `${player.label} 选择蓄力`,
+        label: `${player.label} 选择战术整备`,
         result: `跳过出牌阶段，额外抽取 ${SKIP_PLAY_DRAW} 张牌。`,
         tone: "neutral",
       });
@@ -487,12 +513,11 @@ function SinglePlayerGame() {
     const responsePlayer = game.phase === "save-response" && game.pendingPass?.responderId
       ? playerById(game, game.pendingPass.responderId)
       : undefined;
-    const humanSaveResponse = game.phase === "save-response" && responsePlayer?.id === humanPlayerId;
+    const humanSaveResponse = game.phase === "save-response" && Boolean(responsePlayer && isHumanControlled(responsePlayer.id));
 
     if (game.phase === "setup" || game.phase === "kickoff") {
       const selected = playerById(game, setupPlayerId);
-      if (selected.id !== humanPlayerId || isGoal(position) || !isOwnHalf(selected, position)) return;
-      if (game.players.some((player) => player.position === position && player.id !== selected.id)) return;
+      if (!isHumanControlled(selected.id) || !isLegalSetupPosition(game, selected, position)) return;
       setGame((previous) => {
         const next = structuredClone(previous);
         playerById(next, setupPlayerId).position = position;
@@ -516,48 +541,36 @@ function SinglePlayerGame() {
       performTackle(target.id, selectedCard.id);
     } else if (actionMode === "flying-kick" && target && selectedCard?.kind === "special") {
       performFlyingKick(target.id, selectedCard.id);
-    } else if (actionMode === "press" && target) {
-      performPress(target.id);
+    } else if (actionMode === "press" && target && selectedCard) {
+      performPress(target.id, selectedCard.id);
     }
   }
 
   function performMove(position: number, cardId: string) {
-    setGame((previous) => {
-      const next = structuredClone(previous);
-      return resolveMoveAction(next, cardId, position) ? next : previous;
-    });
+    setGame((previous) => applyTurnAction(previous, (next) => resolveMoveAction(next, cardId, position)));
     clearSelections();
   }
 
   function performPass(position: number, cardId: string) {
     setGame((previous) => {
       const next = structuredClone(previous);
-      return resolvePassAction(next, cardId, position, humanPlayerId) ? next : previous;
+      return resolvePassAction(next, cardId, position, humanPlayerIds) ? next : previous;
     });
     clearSelections();
   }
 
   function performTackle(targetId: string, cardId: string) {
-    setGame((previous) => {
-      const next = structuredClone(previous);
-      return resolveTackleAction(next, cardId, targetId) ? next : previous;
-    });
+    setGame((previous) => applyTurnAction(previous, (next) => resolveTackleAction(next, cardId, targetId)));
     clearSelections();
   }
 
-  function performPress(targetId: string) {
-    setGame((previous) => {
-      const next = structuredClone(previous);
-      return resolvePressAction(next, targetId) ? next : previous;
-    });
+  function performPress(targetId: string, cardId: string) {
+    setGame((previous) => applyTurnAction(previous, (next) => resolvePressAction(next, cardId, targetId)));
     clearSelections();
   }
 
   function performFlyingKick(targetId: string, cardId: string) {
-    setGame((previous) => {
-      const next = structuredClone(previous);
-      return resolveFlyingKickAction(next, cardId, targetId) ? next : previous;
-    });
+    setGame((previous) => applyTurnAction(previous, (next) => resolveFlyingKickAction(next, cardId, targetId)));
     clearSelections();
   }
 
@@ -567,9 +580,7 @@ function SinglePlayerGame() {
     ) as { kind: string; id: string; special?: string } | undefined;
     if (!selectedCard || selectedCard.kind !== "special") return;
 
-    setGame((previous) => {
-      const next = structuredClone(previous);
-      const success = selectedCard.special === "sprint"
+    setGame((previous) => applyTurnAction(previous, (next) => selectedCard.special === "sprint"
         ? resolveSprintAction(next, selectedCard.id)
         : selectedCard.special === "supply"
           ? resolveSupplyAction(next, selectedCard.id)
@@ -577,9 +588,7 @@ function SinglePlayerGame() {
             ? resolveLongPassAction(next, selectedCard.id)
             : selectedCard.special === "save"
               ? resolveSaveRecycle(next, selectedCard.id)
-              : false;
-      return success ? next : previous;
-    });
+              : false));
     clearSelections();
   }
 
@@ -606,7 +615,7 @@ function SinglePlayerGame() {
   function discardOverflow(cardId: string) {
     setGame((previous) => {
       const next = structuredClone(previous);
-      if (next.discardQueue[0] !== humanPlayerId) return previous;
+      if (!isHumanControlled(next.discardQueue[0])) return previous;
       return discardOverflowAction(next, cardId) ? next : previous;
     });
   }
@@ -621,6 +630,7 @@ function SinglePlayerGame() {
     <GameBoard
       game={game}
       humanPlayerId={humanPlayerId}
+      humanPlayerIds={humanPlayerIds}
       selectedCardId={selectedCardId}
       setSelectedCardId={(id) => { setSelectedCardId(id); setActionMode(null); }}
       actionMode={actionMode}
@@ -646,20 +656,26 @@ function SinglePlayerGame() {
 // ── Router ──
 
 export default function Home() {
-  const [isMultiplayer, setIsMultiplayer] = useState(false);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    setIsMultiplayer(params.has("room") || params.has("multiplayer"));
-    setMounted(true);
-  }, []);
-
-  if (!mounted) return null;
-
-  if (isMultiplayer) {
-    return <MultiplayerApp />;
+  const singlePlayerFromUrl = useSyncExternalStore(
+    (listener) => {
+      window.addEventListener("popstate", listener);
+      return () => window.removeEventListener("popstate", listener);
+    },
+    () => {
+      const params = new URLSearchParams(window.location.search);
+      return params.has("singleplayer");
+    },
+    () => false,
+  );
+  if (singlePlayerFromUrl) {
+    return (
+      <>
+        <Link className="multiplayer-launch" href="/">
+          <span>LIVE</span><strong>返回联机大厅</strong><small>创建房间或通过邀请加入</small>
+        </Link>
+        <SinglePlayerGame />
+      </>
+    );
   }
-
-  return <SinglePlayerGame />;
+  return <MultiplayerApp />;
 }

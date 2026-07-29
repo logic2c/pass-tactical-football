@@ -1,4 +1,5 @@
 import { createRoom, joinRoom, cleanupRoom, type Room } from "./room";
+import type { RoomMode } from "../shared/types";
 
 export class RoomManager {
   private rooms = new Map<string, Room>();
@@ -9,26 +10,31 @@ export class RoomManager {
     this.cleanupTimer = setInterval(() => this.cleanup(), 60_000);
   }
 
-  create(mode: "3v3" | "4v4", displayName: string) {
-    const { room, playerId } = createRoom(mode, displayName);
+  create(mode: RoomMode, displayName: string) {
+    let created = createRoom(mode, displayName);
+    while (this.rooms.has(created.room.roomCode)) created = createRoom(mode, displayName);
+    const { room, playerId, reconnectToken } = created;
     this.rooms.set(room.roomCode, room);
-    return { room, playerId };
+    return { room, playerId, reconnectToken };
   }
 
   get(roomCode: string): Room | undefined {
     return this.rooms.get(roomCode.toUpperCase());
   }
 
-  getOrCreate(mode: "3v3" | "4v4", displayName: string) {
-    const { room, playerId } = createRoom(mode, displayName);
+  getOrCreate(mode: RoomMode, displayName: string) {
+    const { room, playerId, reconnectToken } = createRoom(mode, displayName);
     this.rooms.set(room.roomCode, room);
-    return { room, playerId };
+    return { room, playerId, reconnectToken };
   }
 
-  join(roomCode: string, playerId: string | undefined, displayName: string) {
+  join(roomCode: string, reconnectToken: string | undefined, displayName: string) {
     const room = this.get(roomCode);
     if (!room) return { error: "ROOM_NOT_FOUND" as const };
-    return joinRoom(room, playerId, displayName);
+    if (reconnectToken && !room.reconnectTokens.has(reconnectToken)) {
+      return { error: "INVALID_RECONNECT_TOKEN" as const };
+    }
+    return joinRoom(room, reconnectToken, displayName);
   }
 
   delete(roomCode: string) {

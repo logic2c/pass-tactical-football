@@ -1,28 +1,25 @@
 import { WebSocketServer } from "ws";
 import type { WebSocket } from "ws";
-import type { IncomingMessage } from "node:http";
+import type { GameAction, RoomMode } from "../shared/types";
 import { RoomManager } from "./room-manager";
 import { GameRunner } from "./game-runner";
 import { reconnectPlayer, setPlayerDisconnected, transferHost, toRoomState, chooseSlot, toggleReady, startGame } from "./room";
 import type { Room } from "./room";
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
+const HOST = process.env.HOST || "0.0.0.0";
 const HEARTBEAT_INTERVAL = 30_000;
-const HEARTBEAT_TIMEOUT = 60_000;
 
 const rooms = new RoomManager();
 
 function broadcast(room: Room) {
-  const state = toRoomState(room);
-  const message = JSON.stringify({
-    type: "room-state",
-    revision: room.revision,
-    payload: state,
-  });
-
-  room.connections.forEach((ws) => {
+  room.connections.forEach((ws, playerId) => {
     if (ws.readyState === ws.OPEN) {
-      ws.send(message);
+      ws.send(JSON.stringify({
+        type: "room-state",
+        revision: room.revision,
+        payload: toRoomState(room, playerId),
+      }));
     }
   });
 }
@@ -36,18 +33,17 @@ function sendError(ws: WebSocket, code: string, message: string) {
 }
 
 /** Resolve playerId by looking up the WebSocket in the room's connections. */
-function resolvePlayerId(roomCode: string, ws: WebSocket, fallbackPlayerId: string): string {
-  if (fallbackPlayerId) return fallbackPlayerId;
+function resolvePlayerId(roomCode: string, ws: WebSocket): string {
   const room = rooms.get(roomCode);
-  if (!room) return fallbackPlayerId;
+  if (!room) return "";
   for (const [pid, conn] of room.connections) {
     if (conn === ws) return pid;
   }
-  return fallbackPlayerId;
+  return "";
 }
 
-function handleMessage(ws: WebSocket, raw: string, playerId: string, roomCode: string) {
-  let envelope: { type: string; payload?: any };
+function handleMessage(ws: WebSocket, raw: string, roomCode: string): { roomCode?: string } | void {
+  let envelope: { type: string; payload?: Record<string, unknown> };
   try {
     envelope = JSON.parse(raw);
   } catch {
@@ -59,28 +55,30 @@ function handleMessage(ws: WebSocket, raw: string, playerId: string, roomCode: s
 
   switch (type) {
     case "create-room": {
-      const mode = payload.mode === "4v4" ? "4v4" : "3v3";
+      const supportedModes: RoomMode[] = ["1v1", "2v2", "3v3", "4v4", "3v3-duel", "4v4-duo"];
+      const requestedMode = String(payload.mode || "3v3");
+      const mode: RoomMode = supportedModes.includes(requestedMode as RoomMode) ? requestedMode as RoomMode : "3v3";
       const displayName = String(payload.displayName || "Player").slice(0, 20);
-      const { room, playerId: newId } = rooms.create(mode, displayName);
+      const { room, playerId: newId, reconnectToken } = rooms.create(mode, displayName);
       // Update the connection association
       ws.send(JSON.stringify({
         type: "welcome",
         revision: 0,
-        payload: { playerId: newId, roomCode: room.roomCode },
+        payload: { playerId: newId, roomCode: room.roomCode, reconnectToken },
       }));
       room.connections.set(newId, ws);
       broadcast(room);
-      break;
+      return { roomCode: room.roomCode };
     }
 
     case "join-room": {
       const code = String(payload.roomCode || "").toUpperCase();
       const displayName = String(payload.displayName || "Player").slice(0, 20);
-      const existingPlayerId = payload.playerId || undefined;
+      const reconnectToken = typeof payload.reconnectToken === "string" ? payload.reconnectToken : undefined;
 
-      const result = rooms.join(code, existingPlayerId, displayName);
+      const result = rooms.join(code, reconnectToken, displayName);
       if ("error" in result) {
-        sendError(ws, result.error, result.error === "ROOM_NOT_FOUND" ? "房间不存在。" : "加入失败。");
+        sendError(ws, result.error, result.error === "ROOM_NOT_FOUND" ? "房间不存在。" : result.error === "INVALID_RECONNECT_TOKEN" ? "重连凭证已失效，请重新加入房间。" : "加入失败。");
         return;
       }
 
@@ -88,7 +86,7 @@ function handleMessage(ws: WebSocket, raw: string, playerId: string, roomCode: s
       ws.send(JSON.stringify({
         type: "welcome",
         revision: room.revision,
-        payload: { playerId: result.slot.playerId, roomCode: code },
+        payload: { playerId: result.slot.playerId, roomCode: code, reconnectToken: result.reconnectToken },
       }));
 
       if (result.isReconnect) {
@@ -98,14 +96,14 @@ function handleMessage(ws: WebSocket, raw: string, playerId: string, roomCode: s
       }
 
       broadcast(room);
-      break;
+      return { roomCode: code };
     }
 
     case "choose-slot": {
       const room = rooms.get(roomCode);
       if (!room) { sendError(ws, "ROOM_NOT_FOUND", "房间不存在。"); return; }
-      const pid = resolvePlayerId(roomCode, ws, playerId);
-      if (!chooseSlot(room, pid, payload.positionId)) {
+      const pid = resolvePlayerId(roomCode, ws);
+      if (!chooseSlot(room, pid, String(payload.positionId || ""))) {
         sendError(ws, "SLOT_TAKEN", "该位置已被占用。");
         return;
       }
@@ -116,7 +114,7 @@ function handleMessage(ws: WebSocket, raw: string, playerId: string, roomCode: s
     case "toggle-ready": {
       const room = rooms.get(roomCode);
       if (!room) { sendError(ws, "ROOM_NOT_FOUND", "房间不存在。"); return; }
-      const pid = resolvePlayerId(roomCode, ws, playerId);
+      const pid = resolvePlayerId(roomCode, ws);
       toggleReady(room, pid);
       broadcast(room);
       break;
@@ -125,7 +123,7 @@ function handleMessage(ws: WebSocket, raw: string, playerId: string, roomCode: s
     case "start-game": {
       const room = rooms.get(roomCode);
       if (!room) { sendError(ws, "ROOM_NOT_FOUND", "房间不存在。"); return; }
-      const pid = resolvePlayerId(roomCode, ws, playerId);
+      const pid = resolvePlayerId(roomCode, ws);
       const slot = room.slots.find((s) => s.playerId === pid);
       if (!slot?.isHost) { sendError(ws, "NOT_HOST", "只有房主可以开始游戏。"); return; }
       if (!startGame(room)) { sendError(ws, "NOT_READY", "所有玩家必须准备就绪。"); return; }
@@ -136,8 +134,8 @@ function handleMessage(ws: WebSocket, raw: string, playerId: string, roomCode: s
     case "game-command": {
       const room = rooms.get(roomCode);
       if (!room) { sendError(ws, "ROOM_NOT_FOUND", "房间不存在。"); return; }
-      const pid = resolvePlayerId(roomCode, ws, playerId);
-      const result = gameRunner.processCommand(room, pid, payload);
+      const pid = resolvePlayerId(roomCode, ws);
+      const result = gameRunner.processCommand(room, pid, payload as unknown as GameAction);
       if (!result.ok) {
         sendError(ws, result.error || "INVALID_ACTION", "无法执行此操作。");
         return;
@@ -149,8 +147,8 @@ function handleMessage(ws: WebSocket, raw: string, playerId: string, roomCode: s
     case "leave-room": {
       const room = rooms.get(roomCode);
       if (room) {
-        const pid = resolvePlayerId(roomCode, ws, playerId);
-        setPlayerDisconnected(room, pid);
+        const pid = resolvePlayerId(roomCode, ws);
+        setPlayerDisconnected(room, pid, ws);
         transferHost(room);
         broadcast(room);
       }
@@ -170,12 +168,11 @@ function handleMessage(ws: WebSocket, raw: string, playerId: string, roomCode: s
 }
 
 export function createServer() {
-  const wss = new WebSocketServer({ port: PORT });
+  const wss = new WebSocketServer({ port: PORT, host: HOST });
 
-  console.log(`[PASS Server] WebSocket server listening on ws://localhost:${PORT}`);
+  console.log(`[PASS Server] WebSocket server listening on ws://${HOST}:${PORT}`);
 
-  wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
-    let playerId = "";
+  wss.on("connection", (ws: WebSocket) => {
     let roomCode = "";
     let alive = true;
 
@@ -193,16 +190,10 @@ export function createServer() {
 
     ws.on("message", (data: Buffer) => {
       const raw = data.toString();
-      try {
-        // For the first message, extract playerId/roomCode from payload
-        const envelope = JSON.parse(raw);
-        if (envelope.payload) {
-          if (envelope.payload.roomCode) roomCode = envelope.payload.roomCode;
-          if (envelope.payload.playerId) playerId = envelope.payload.playerId;
-        }
-      } catch { /* parse error handled in handleMessage */ }
-
-      handleMessage(ws, raw, playerId, roomCode);
+      const result = handleMessage(ws, raw, roomCode);
+      if (result) {
+        if (result.roomCode) roomCode = result.roomCode;
+      }
     });
 
     ws.on("close", () => {
@@ -210,9 +201,9 @@ export function createServer() {
       if (roomCode) {
         const room = rooms.get(roomCode);
         if (room) {
-          const pid = resolvePlayerId(roomCode, ws, playerId);
+          const pid = resolvePlayerId(roomCode, ws);
           if (pid) {
-            setPlayerDisconnected(room, pid);
+            setPlayerDisconnected(room, pid, ws);
             transferHost(room);
             broadcast(room);
           }

@@ -15,7 +15,7 @@
     "desktop:build-ui": "vite build --config vite.desktop.config.ts",
     "desktop:dist": "pnpm desktop:build-ui && electron-builder --win portable",
     "desktop:check": "node scripts/check-desktop-render.mjs",
-    "test": "pnpm run build && node --experimental-strip-types --test --test-isolation=none tests/rendered-html.test.mjs",
+    "test": "pnpm run build && node --experimental-strip-types --test --test-isolation=none tests/rendered-html.test.mjs tests/server-room.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },
