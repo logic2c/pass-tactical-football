@@ -44,3 +44,7 @@ next-env.d.ts
 /outputs/
 /work/
 *.tsbuildinfo
+
+# Local design and balance notes are intentionally not published.
+/PATCH_NOTES/
+/docs/archive/
