@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo, useRef, useCallback, useSyncExternalStore } from "react";
 import Link from "next/link";
+import TutorialGame from "./components/TutorialGame";
 import type {
   ActionMode,
   GameAction,
@@ -656,26 +657,39 @@ function SinglePlayerGame() {
 // ── Router ──
 
 export default function Home() {
-  const singlePlayerFromUrl = useSyncExternalStore(
+  const routeMode = useSyncExternalStore(
     (listener) => {
       window.addEventListener("popstate", listener);
       return () => window.removeEventListener("popstate", listener);
     },
     () => {
       const params = new URLSearchParams(window.location.search);
-      return params.has("singleplayer");
+      if (params.has("tutorial")) return "tutorial";
+      if (params.has("singleplayer")) return "singleplayer";
+      return "multiplayer";
     },
-    () => false,
+    () => "multiplayer",
   );
-  if (singlePlayerFromUrl) {
+  if (routeMode === "tutorial") return <TutorialGame />;
+  if (routeMode === "singleplayer") {
     return (
       <>
         <Link className="multiplayer-launch" href="/">
           <span>LIVE</span><strong>返回联机大厅</strong><small>创建房间或通过邀请加入</small>
         </Link>
+        <a className="tutorial-launch" href="?tutorial=1">
+          <span>F1</span><strong>开始教学</strong><small>9 个互动关卡</small>
+        </a>
         <SinglePlayerGame />
       </>
     );
   }
-  return <MultiplayerApp />;
+  return (
+    <>
+      <a className="tutorial-launch" href="?tutorial=1">
+        <span>?</span><strong>新手教程</strong><small>从按键到完整进攻</small>
+      </a>
+      <MultiplayerApp />
+    </>
+  );
 }

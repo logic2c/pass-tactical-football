@@ -23,6 +23,7 @@ async function allSource() {
   const files = [
     "../app/page.tsx",
     "../app/components/GameBoard.tsx",
+    "../app/components/TutorialGame.tsx",
     "../shared/types.ts",
     "../shared/constants.ts",
     "../shared/game-rules.ts",
@@ -33,6 +34,25 @@ async function allSource() {
   const contents = await Promise.all(files.map((f) => readFile(new URL(f, import.meta.url), "utf8")));
   return contents.join("\n");
 }
+
+test("the interactive tutorial covers the complete basic learning path", async () => {
+  const tutorial = await readFile(new URL("../app/components/TutorialGame.tsx", import.meta.url), "utf8");
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const desktop = await readFile(new URL("../desktop/electron/main.mjs", import.meta.url), "utf8");
+
+  assert.match(page, /params\.has\("tutorial"\)/);
+  assert.match(page, /<TutorialGame \/>/);
+  assert.match(desktop, /loadFile\(gamePage, \{ query: \{ tutorial: "1" \} \}\)/);
+  assert.match(tutorial, /界面与按键总览/);
+  assert.match(tutorial, /行动力与手牌/);
+  assert.match(tutorial, /空位传球与接应/);
+  assert.match(tutorial, /R2 以无球状态开始回合，拥有2点行动力/);
+  assert.match(tutorial, /基础上抢/);
+  assert.match(tutorial, /禁区与射门/);
+  assert.match(tutorial, /完整进攻/);
+  assert.match(tutorial, /localStorage\.setItem\("pass-tutorial-unlocked"/);
+  assert.doesNotMatch(tutorial, /specialCards|resolveTackleAction|resolveSprintAction/);
+});
 
 test("server-renders the PASS game shell", async () => {
   const response = await render();
@@ -276,9 +296,9 @@ test("multiplayer entry and copy never masquerade as single-player AI", async ()
   const board = await readFile(new URL("../app/components/GameBoard.tsx", import.meta.url), "utf8");
 
   assert.match(page, /params\.has\("singleplayer"\)/);
-  assert.match(page, /if \(singlePlayerFromUrl\)/);
+  assert.match(page, /if \(routeMode === "singleplayer"\)/);
   assert.match(page, /返回联机大厅/);
-  assert.match(page, /return <MultiplayerApp \/>;/);
+  assert.match(page, /<MultiplayerApp \/>/);
   assert.doesNotMatch(page, /manualMultiplayer/);
   assert.match(board, /const aiThinking = !isMultiplayer/);
   assert.match(board, /!isMultiplayer && game\.aiNote/);

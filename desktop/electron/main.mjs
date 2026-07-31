@@ -6,7 +6,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const appRoot = path.join(__dirname, "..", "..");
 const gamePage = path.join(appRoot, "desktop-dist", "index.html");
-const tutorialPage = path.join(appRoot, "desktop-dist", "tutorial.html");
 
 function protectWindow(window) {
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -52,7 +51,7 @@ function openTutorial() {
   });
 
   protectWindow(window);
-  window.loadFile(tutorialPage);
+  window.loadFile(gamePage, { query: { tutorial: "1" } });
 }
 
 app.whenReady().then(() => {

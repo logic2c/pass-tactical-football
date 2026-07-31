@@ -657,3 +657,94 @@ h1 { margin: 0; font-size: 34px; line-height: .95; letter-spacing: -.06em; font-
 @media (max-width: 620px) {
   .event-popover { bottom: 282px; }
 }
+
+/* Interactive tutorial */
+.tutorial-launch {
+  position: fixed;
+  z-index: 120;
+  top: 24px;
+  right: 176px;
+  display: grid;
+  grid-template-columns: 42px auto;
+  grid-template-rows: auto auto;
+  min-width: 176px;
+  min-height: 58px;
+  padding: 7px 12px 7px 8px;
+  border: 1px solid var(--ink);
+  color: var(--ink);
+  background: #f7f4ea;
+  box-shadow: 5px 5px 0 var(--acid);
+  text-decoration: none;
+}
+.tutorial-launch > span {
+  grid-row: 1 / 3;
+  display: grid;
+  place-items: center;
+  margin-right: 9px;
+  color: #fff;
+  background: var(--ink);
+  font: 900 16px/1 "Arial Narrow", "Microsoft YaHei UI", sans-serif;
+}
+.tutorial-launch strong { align-self: end; font-size: 13px; }
+.tutorial-launch small { font-size: 9px; color: #5f625e; }
+.tutorial-launch:hover { transform: translate(-2px, -2px); box-shadow: 7px 7px 0 var(--acid); }
+
+.tutorial-wrapper { min-height: 100dvh; }
+.tutorial-wrapper.overview .game-shell { pointer-events: none; filter: saturate(.75); }
+.tutorial-wrapper.overview .tutorial-coach { pointer-events: auto; }
+.tutorial-wrapper.overview .game-shell :is(.turn-ribbon, .pitch-panel, .command-deck, .quick-actions, .event-history, .phase-card) {
+  transition: opacity .18s ease, filter .18s ease, outline-color .18s ease;
+}
+.tutorial-wrapper.overview .game-shell :is(.turn-ribbon, .pitch-panel, .command-deck, .quick-actions, .event-history, .phase-card) { opacity: .34; filter: grayscale(.45); }
+.tutorial-wrapper.tutorial-focus-turn .turn-ribbon,
+.tutorial-wrapper.tutorial-focus-board .pitch-panel,
+.tutorial-wrapper.tutorial-focus-hand .command-deck,
+.tutorial-wrapper.tutorial-focus-actions .quick-actions,
+.tutorial-wrapper.tutorial-focus-feed .action-banner,
+.tutorial-wrapper.tutorial-focus-history .event-history,
+.tutorial-wrapper.tutorial-focus-phase .phase-card {
+  opacity: 1 !important;
+  filter: none !important;
+  outline: 5px solid var(--acid);
+  outline-offset: 4px;
+  position: relative;
+  z-index: 90;
+}
+
+.tutorial-coach {
+  position: fixed;
+  z-index: 160;
+  left: 20px;
+  bottom: 20px;
+  width: min(348px, calc(100vw - 40px));
+  padding: 14px;
+  border: 1px solid var(--ink);
+  background: rgba(247, 244, 234, .98);
+  box-shadow: 8px 8px 0 var(--ink);
+}
+.tutorial-coach.complete { border-color: #668100; box-shadow: 8px 8px 0 var(--acid); }
+.tutorial-coach-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.tutorial-coach-head > div { display: flex; align-items: center; gap: 8px; }
+.tutorial-coach-head span { padding: 4px 6px; color: #fff; background: var(--ink); font: 900 9px/1 "Arial Narrow", "Microsoft YaHei UI", sans-serif; letter-spacing: .08em; }
+.tutorial-coach-head strong { font: 900 9px/1 "Arial Narrow", "Microsoft YaHei UI", sans-serif; letter-spacing: .08em; }
+.tutorial-coach-head > button { width: 28px; height: 28px; border: 1px solid var(--ink); background: transparent; font-size: 18px; cursor: pointer; }
+.tutorial-progress { display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; margin: 12px 0; }
+.tutorial-progress button { height: 20px; padding: 0; border: 1px solid #aaa99f; color: #aaa99f; background: transparent; font: 800 8px/1 "Arial Narrow", "Microsoft YaHei UI", sans-serif; }
+.tutorial-progress button.unlocked { color: var(--ink); border-color: var(--ink); cursor: pointer; }
+.tutorial-progress button.active { background: var(--acid); box-shadow: inset 0 -3px 0 rgba(0,0,0,.12); }
+.tutorial-kicker { margin: 0 0 5px; color: #7a8000; font: 900 10px/1.2 "Arial Narrow", "Microsoft YaHei UI", sans-serif; letter-spacing: .06em; text-transform: uppercase; }
+.tutorial-coach h2 { margin: 0 0 8px; font-size: 19px; line-height: 1.18; }
+.tutorial-body, .tutorial-note { margin: 0 0 6px; font-size: 12px; line-height: 1.55; }
+.tutorial-note { padding-left: 10px; border-left: 3px solid #c8c4b7; color: #555953; }
+.tutorial-feedback, .tutorial-hint { margin: 10px 0 0; padding: 8px 9px; border: 1px solid #df4c42; background: #fff2ee; font-size: 11px; line-height: 1.45; }
+.tutorial-feedback.success { border-color: #799600; background: #f1facd; }
+.tutorial-hint { border-style: dashed; border-color: var(--ink); background: #fff; }
+.tutorial-coach-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+.tutorial-coach-actions button { min-height: 34px; padding: 7px 11px; }
+
+@media (max-width: 899px) {
+  .tutorial-launch { top: auto; right: 14px; bottom: 14px; min-width: 158px; }
+  .tutorial-coach { top: 10px; right: 10px; bottom: auto; left: 10px; width: auto; max-height: 42dvh; overflow-y: auto; box-shadow: 5px 5px 0 var(--ink); }
+  .tutorial-wrapper { padding-top: 220px; }
+  .tutorial-wrapper.overview { padding-top: 0; }
+}
