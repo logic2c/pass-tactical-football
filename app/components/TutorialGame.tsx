@@ -34,8 +34,8 @@ const CHAPTERS: TutorialChapter[] = [
   {
     title: "界面与按键总览",
     tag: "ORIENTATION",
-    objective: "依次认识比赛界面的主要区域和操作方式。",
-    lesson: ["这一部分不会推进比赛。", "跟随高亮区域阅读说明，然后开始训练。"],
+    objective: "完成界面总览。",
+    lesson: ["第 1 步：阅读当前高亮区域的说明。", "第 2 步：点击“下一个界面区域”，依次查看全部 9 个区域。", "第 3 步：点击“开始训练”。"],
     allowed: [],
   },
   {
@@ -55,50 +55,50 @@ const CHAPTERS: TutorialChapter[] = [
   {
     title: "直接传给队友",
     tag: "DIRECT PASS",
-    objective: "使用 Rock 将 R1 的足球直接传给 R2。",
-    lesson: ["选择行动卡后点击“传球”。", "合法队友和落点会在棋盘上高亮。"],
+    objective: "将足球传到 e6 的 R2。",
+    lesson: ["第 1 步：选择 R1 手牌中的 Rock。", "第 2 步：点击“传球”。", "第 3 步：点击 e6 的 R2。"],
     allowed: ["pass"],
   },
   {
     title: "队友也会挡球",
     tag: "PASS LANE",
-    objective: "先尝试越过 R2 传给 R3，再把球交给最先挡路的 R2。",
-    lesson: ["传球不能越过第一个挡路的球员。", "第一个挡路的是队友时，可以直接传给他。"],
+    objective: "将足球传到 e5 的 R2。",
+    lesson: ["第 1 步：选择 R1 手牌中的 Rock。", "第 2 步：点击“传球”，再点击 e7 的 R3；e5 的 R2 会挡住路线。", "第 3 步：再次点击 e5 的 R2，将球传给最先挡路的队友。"],
     allowed: ["pass"],
   },
   {
     title: "行动力与手牌",
     tag: "TEMPO",
-    objective: "本回合不要出牌，点击“战术整备”补充手牌。",
-    lesson: ["无球队员准备阶段获得2点行动力，持球者只有1点。", "直接接球会让队友下回合以持球者身份开始；行动力上限并不意味着必须把牌用完。"],
+    objective: "完成一次战术整备。",
+    lesson: ["第 1 步：不要选择或使用任何手牌。", "第 2 步：点击“战术整备 · 抽 2”。", "完成后 R1 会跳过出牌阶段并额外抽取 2 张牌。"],
     allowed: ["skip"],
   },
   {
     title: "空位传球与接应",
     tag: "SPACE PASS",
-    objective: "将球传到空格，让 R2 移动经过足球后，再把球传给 R3。",
-    lesson: ["R2 开始回合时仍然无球，因此获得2点行动力。", "第一点行动力移动拾球后不会重置，仍可用第二点行动力继续移动或传球。", "空位传球收益很高，但对手也可能先到达落点。"],
+    objective: "将足球传到 d8 的 R3。",
+    lesson: ["第 1 步：选择 R1 的 Rock，点击“传球”，再点击空格 e5。", "第 2 步：轮到 R2 后，选择 Bishop，点击“移动”，再点击 d6；R2 会在途中经过 e5 并拾球。", "第 3 步：选择 R2 的 Rock，点击“传球”，再点击 d8 的 R3。"],
     allowed: ["move", "pass"],
   },
   {
     title: "基础上抢",
     tag: "PRESS",
-    objective: "使用 B1 连续上抢 R1，观察一次失败和一次成功。",
-    lesson: ["上抢需要在持球者一格以内，消耗1点行动力并弃置一张牌。", "第一次会削减对方手牌，第二次固定抽中足球。"],
+    objective: "让 B1 夺得足球。",
+    lesson: ["第 1 步：选择 B1 的 Bishop，点击“上抢”，再点击 d3 的 R1。", "第 2 步：第一次上抢会弃掉 R1 的普通牌。", "第 3 步：选择 B1 的 Rock，再次点击“上抢”和 d3 的 R1，夺得足球。"],
     allowed: ["press"],
   },
   {
     title: "禁区与射门",
     tag: "FINISHING",
-    objective: "先尝试被 B1 封锁的左侧球门，再改用 Bishop 射入另一侧球门。",
-    lesson: ["球员不能移动进入球门，必须使用 PASS 射门。", "射门仍会被球员阻挡；身处对方禁区时不能射门。"],
+    objective: "将足球射入蓝方球门 E。",
+    lesson: ["第 1 步：选择 R1 的 Knight，点击“传球”，再点击蓝方球门 D；cX 的 B1 会挡住路线。", "第 2 步：选择 R1 的 Bishop，点击“传球”，再点击蓝方球门 E 完成射门。"],
     allowed: ["pass"],
   },
   {
     title: "完整进攻演练",
     tag: "FINAL DRILL",
-    objective: "让 R1 把球交给 R2，再由 R2 完成射门。",
-    lesson: ["现在不再逐步锁定选择。", "观察行动顺序、传球路线和剩余手牌，完成一次完整进攻。"],
+    objective: "将足球射入蓝方球门 D。",
+    lesson: ["第 1 步：选择 R1 的 Rock，点击“传球”，再点击 d8 的 R2。", "第 2 步：轮到 R2 后，选择 Rock，点击“传球”，再点击蓝方球门 D。"],
     allowed: ["move", "pass"],
   },
 ];
@@ -323,22 +323,27 @@ export default function TutorialGame() {
         return;
       }
     }
-    if (chapter === 4 && actionMode === "pass" && position === 28) {
-      setAttemptedBlock(true);
-      setFeedback("R2 是线路上的第一名球员，足球不能越过他传给 R3。请改为直接点击 R2。 ");
-      return;
-    }
-    if (chapter === 8 && actionMode === "pass" && position === 80) {
-      setAttemptedBlock(true);
-      setFeedback("左侧球门的 Knight 路线被 B1 封锁。换用 Bishop，观察另一侧球门。 ");
-      return;
-    }
     if (!selectedCard || selectedCard.kind !== "action") {
       setFeedback("先从手牌中选择一张行动卡。 ");
       return;
     }
     if (actionMode === "move") {
       if (!allowed(chapter, "move")) return reject("move");
+      if (chapter === 1) {
+        const expectedTarget = selectedCard.id === "move-rock" ? 62 : selectedCard.id === "move-bishop" ? 44 : undefined;
+        if (selectedCard.id === "move-bishop" && playerById(game, "r1").position !== 62) {
+          setFeedback("请先完成第 1、2 步：使用 Rock 将 R1 从 e3 移到 g3。 ");
+          return;
+        }
+        if (expectedTarget !== undefined && position !== expectedTarget) {
+          setFeedback(`这一步的指定目标是 ${selectedCard.id === "move-rock" ? "g3" : "e5"}。请点击该格。`);
+          return;
+        }
+      }
+      if (chapter === 6 && selectedCard.id === "pickup-bishop" && position !== 35) {
+        setFeedback("这一步的指定目标是 d6。R2 会在移动途中经过 e5 并拾球。 ");
+        return;
+      }
       setGame((previous) => {
         const next = structuredClone(previous);
         if (!resolveMoveAction(next, selectedCard.id, position)) {
@@ -350,6 +355,54 @@ export default function TutorialGame() {
       });
     } else if (actionMode === "pass") {
       if (!allowed(chapter, "pass")) return reject("pass");
+      if (chapter === 3 && selectedCard.id === "direct-rock" && position !== 36) {
+        setFeedback("本关目标是 e6 的 R2。请点击 e6。 ");
+        return;
+      }
+      if (chapter === 4 && selectedCard.id === "lane-rock") {
+        if (!attemptedBlock && position !== 28) {
+          setFeedback("请先点击 e7 的 R3，观察 e5 的 R2 如何阻挡传球路线。 ");
+          return;
+        }
+        if (!attemptedBlock && position === 28) {
+          setAttemptedBlock(true);
+          setFeedback("e5 的 R2 是线路上的第一名球员，足球不能越过他到达 e7。现在请点击 e5 的 R2。 ");
+          return;
+        }
+        if (attemptedBlock && position !== 44) {
+          setFeedback("第二步的指定目标是 e5 的 R2。请点击 e5。 ");
+          return;
+        }
+      }
+      if (chapter === 6) {
+        const expectedTarget = selectedCard.id === "space-pass-rock" ? 44 : selectedCard.id === "follow-rock" ? 19 : undefined;
+        if (expectedTarget !== undefined && position !== expectedTarget) {
+          setFeedback(`这一步的指定目标是 ${selectedCard.id === "space-pass-rock" ? "空格 e5" : "d8 的 R3"}。请点击该格。`);
+          return;
+        }
+      }
+      if (chapter === 8) {
+        if (selectedCard.id === "blocked-knight") {
+          if (position !== 80) {
+            setFeedback("请先使用 Knight 尝试射向蓝方球门 D。 ");
+            return;
+          }
+          setAttemptedBlock(true);
+          setFeedback("Knight 射向蓝方球门 D 的路线被 cX 的 B1 封锁。现在请选择 Bishop，射向蓝方球门 E。 ");
+          return;
+        }
+        if (selectedCard.id === "goal-bishop" && (!attemptedBlock || position !== 81)) {
+          setFeedback(attemptedBlock ? "第二步的指定目标是蓝方球门 E。请点击球门 E。 " : "请先使用 Knight 尝试射向蓝方球门 D。 ");
+          return;
+        }
+      }
+      if (chapter === 9) {
+        const expectedTarget = selectedCard.id === "final-pass" ? 19 : selectedCard.id === "final-shot" ? 80 : undefined;
+        if (expectedTarget !== undefined && position !== expectedTarget) {
+          setFeedback(`这一步的指定目标是 ${selectedCard.id === "final-pass" ? "d8 的 R2" : "蓝方球门 D"}。请点击该位置。`);
+          return;
+        }
+      }
       setGame((previous) => {
         const next = structuredClone(previous);
         if (!resolvePassAction(next, selectedCard.id, position, humanPlayerIds)) {
@@ -375,6 +428,16 @@ export default function TutorialGame() {
   function performPress(targetId: string) {
     if (!allowed(chapter, "press")) return reject("press");
     if (!selectedCard) return setFeedback("先选择一张要弃置的手牌。 ");
+    if (chapter === 7) {
+      if (targetId !== "r1") return setFeedback("本关的上抢目标是 d3 的 R1。请点击 R1。 ");
+      const targetHasOrdinaryCard = playerById(game, "r1").hand.some((card) => card.kind !== "ball");
+      if (targetHasOrdinaryCard && selectedCard.id !== "press-one") {
+        return setFeedback("第 1 步请选择 Bishop，再对 d3 的 R1 使用上抢。 ");
+      }
+      if (!targetHasOrdinaryCard && selectedCard.id !== "press-two") {
+        return setFeedback("第 3 步请选择 Rock，再对 d3 的 R1 使用上抢。 ");
+      }
+    }
     setGame((previous) => {
       const next = structuredClone(previous);
       if (!resolvePressAction(next, selectedCard.id, targetId, () => 0)) {
