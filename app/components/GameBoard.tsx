@@ -1,6 +1,6 @@
 "use client";
 
-import { type CSSProperties, useState } from "react";
+import { type CSSProperties, type ReactNode, useState } from "react";
 import {
   ALL_GOALS,
   BOARD_HEIGHT,
@@ -82,6 +82,7 @@ export interface GameBoardProps {
   onRestartGame: () => void;
   isMultiplayer?: boolean;
   canConfirmKickoff?: boolean;
+  headerTools?: ReactNode;
 }
 
 export default function GameBoard({
@@ -108,6 +109,7 @@ export default function GameBoard({
   onRestartGame,
   isMultiplayer,
   canConfirmKickoff = true,
+  headerTools,
 }: GameBoardProps) {
   const controlledPlayerIds = humanPlayerIds ?? [humanPlayerId];
   const isHumanControlled = (playerId: string) => controlledPlayerIds.includes(playerId);
@@ -236,6 +238,7 @@ export default function GameBoard({
           <span className={`possession ${game.offense}`}>{game.looseBall === undefined ? `${describeTeam(game.offense)}进攻` : `足球落地 · ${describeTeam(game.offense)}进攻`}</span>
           {!isMultiplayer && <button className="quiet-button" onClick={onRestartGame}>重开比赛</button>}
           {isMultiplayer && <span className="multiplayer-badge">联机模式</span>}
+          {headerTools}
         </div>
       </header>
 

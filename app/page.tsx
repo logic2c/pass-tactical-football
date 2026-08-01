@@ -326,6 +326,9 @@ function MultiplayerApp() {
   if (phase === "lobby") {
     return (
       <div style={{ position: "relative", display: "flex", justifyContent: "center", padding: "2rem" }}>
+        <a className="tutorial-launch" href="?tutorial=1">
+          <span>?</span><strong>新手教程</strong><small>从按键到完整进攻</small>
+        </a>
         <LobbyPanel
           mode={mode}
           initialCode={roomCode || undefined}
@@ -372,6 +375,7 @@ function MultiplayerApp() {
         onRestartGame={() => {}}
         isMultiplayer
         canConfirmKickoff={gameState.phase === "setup" ? isHost : myPositionIds.includes(activePlayer(gameState).id)}
+        headerTools={<HeaderShortcuts />}
       />
       <ReconnectOverlay visible={showReconnect} message={reconnectMsg} onRetry={handleManualReconnect} />
     </div>
@@ -650,7 +654,21 @@ function SinglePlayerGame() {
       onDeclineSave={declineSave}
       onDiscardOverflow={discardOverflow}
       onRestartGame={restartGame}
+      headerTools={<HeaderShortcuts includeLobby />}
     />
+  );
+}
+
+function HeaderShortcuts({ includeLobby = false }: { includeLobby?: boolean }) {
+  return (
+    <nav className="header-shortcuts" aria-label="页面快捷入口">
+      {includeLobby && <Link className="header-shortcut live" href="/">
+        <span>LIVE</span><strong>返回联机大厅</strong><small>创建或加入房间</small>
+      </Link>}
+      <a className="header-shortcut tutorial" href="?tutorial=1">
+        <span>F1</span><strong>开始教学</strong><small>9 个互动关卡</small>
+      </a>
+    </nav>
   );
 }
 
@@ -671,25 +689,6 @@ export default function Home() {
     () => "multiplayer",
   );
   if (routeMode === "tutorial") return <TutorialGame />;
-  if (routeMode === "singleplayer") {
-    return (
-      <>
-        <Link className="multiplayer-launch" href="/">
-          <span>LIVE</span><strong>返回联机大厅</strong><small>创建房间或通过邀请加入</small>
-        </Link>
-        <a className="tutorial-launch" href="?tutorial=1">
-          <span>F1</span><strong>开始教学</strong><small>9 个互动关卡</small>
-        </a>
-        <SinglePlayerGame />
-      </>
-    );
-  }
-  return (
-    <>
-      <a className="tutorial-launch" href="?tutorial=1">
-        <span>?</span><strong>新手教程</strong><small>从按键到完整进攻</small>
-      </a>
-      <MultiplayerApp />
-    </>
-  );
+  if (routeMode === "singleplayer") return <SinglePlayerGame />;
+  return <MultiplayerApp />;
 }

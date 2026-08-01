@@ -320,6 +320,19 @@ test("large-screen wrapped hands start at the first row and remain vertically sc
   assert.match(css, /overflow-x: hidden; overflow-y: auto;/);
 });
 
+test("desktop match chrome aligns the feed with the pitch and keeps shortcuts in the header", async () => {
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const board = await readFile(new URL("../app/components/GameBoard.tsx", import.meta.url), "utf8");
+
+  assert.match(css, /--pitch-ui-width: min\(100%, calc\(80dvh - 136px\)\)/);
+  assert.match(css, /--pitch-ui-width: min\(100%, calc\(80dvh - 176px\)\)/);
+  assert.match(css, /\.action-banner, \.pitch-frame, \.pitch-legend \{ width: var\(--pitch-ui-width\); \}/);
+  assert.match(page, /className="header-shortcuts"/);
+  assert.match(board, /\{headerTools\}/);
+  assert.doesNotMatch(css, /\.multiplayer-launch/);
+});
+
 test("the active controlled player hand follows each new turn without blocking teammate inspection", async () => {
   const board = await readFile(new URL("../app/components/GameBoard.tsx", import.meta.url), "utf8");
   assert.match(board, /handView\.turnActorId !== current\.id/);

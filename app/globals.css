@@ -32,19 +32,6 @@ body {
 button { color: inherit; font: inherit; }
 button:focus-visible { outline: 3px solid var(--acid); outline-offset: 3px; }
 button:disabled { cursor: not-allowed; }
-.multiplayer-launch {
-  position: fixed; right: 14px; top: 14px; z-index: 900;
-  display: grid; grid-template-columns: auto 1fr; column-gap: 9px; align-items: center;
-  padding: 9px 13px; border: 2px solid var(--ink); color: white; background: var(--ink);
-  box-shadow: 4px 4px 0 var(--acid); cursor: pointer; text-align: left;
-}
-.multiplayer-launch span { grid-row: span 2; padding: 4px 5px; color: var(--ink); background: var(--acid); font-size: 8px; font-weight: 1000; letter-spacing: .1em; }
-.multiplayer-launch strong { font-size: 11px; line-height: 1; }
-.multiplayer-launch small { color: #cbd0ca; font-size: 7px; }
-.multiplayer-launch:hover { color: var(--ink); background: var(--acid); box-shadow: 4px 4px 0 var(--ink); }
-.multiplayer-launch:hover span { color: white; background: var(--ink); }
-.multiplayer-launch:hover small { color: #545a3a; }
-
 .game-shell { width: min(1540px, calc(100% - 32px)); margin: 0 auto; padding: 18px 0 32px; }
 .match-header {
   min-height: 86px;
@@ -73,7 +60,7 @@ h1 { margin: 0; font-size: 34px; line-height: .95; letter-spacing: -.06em; font-
 .score-divider { min-width: 62px; align-self: stretch; display: grid; place-items: center; position: relative; background: var(--ink); color: white; }
 .score-divider span { position: absolute; top: 5px; font-size: 7px; letter-spacing: .09em; color: var(--acid); }
 .score-divider b { font-size: 25px; }
-.header-actions { justify-self: end; display: flex; align-items: center; gap: 10px; }
+.header-actions { min-width: 0; justify-self: end; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .possession { padding: 8px 11px; color: white; font-size: 11px; font-weight: 900; letter-spacing: .08em; }
 .possession.red { background: var(--red); }.possession.blue { background: var(--blue); }
 .quiet-button { border: 1px solid var(--ink); padding: 8px 10px; background: transparent; cursor: pointer; font-size: 11px; font-weight: 800; }
@@ -82,6 +69,19 @@ h1 { margin: 0; font-size: 34px; line-height: .95; letter-spacing: -.06em; font-
   padding: 8px 11px; color: white; background: var(--ink);
   font-size: 10px; font-weight: 1000; letter-spacing: .08em; text-transform: uppercase;
 }
+.header-shortcuts { display: flex; align-items: stretch; gap: 7px; }
+.header-shortcut {
+  min-width: 126px; min-height: 46px; display: grid; grid-template-columns: 34px 1fr; grid-template-rows: 1fr 1fr;
+  column-gap: 8px; padding: 6px 9px 6px 6px; border: 1px solid var(--ink); color: var(--ink); background: #f7f4ea;
+  box-shadow: 3px 3px 0 var(--acid); text-align: left; text-decoration: none;
+}
+.header-shortcut > span { grid-row: 1 / 3; display: grid; place-items: center; color: white; background: var(--ink); font-size: 9px; font-weight: 1000; letter-spacing: .06em; }
+.header-shortcut strong { align-self: end; font-size: 10px; line-height: 1.05; white-space: nowrap; }
+.header-shortcut small { align-self: start; color: #666b65; font-size: 7px; white-space: nowrap; }
+.header-shortcut.live { color: white; background: var(--ink); }
+.header-shortcut.live > span { color: var(--ink); background: var(--acid); }
+.header-shortcut.live small { color: #cbd0ca; }
+.header-shortcut:hover { transform: translate(-1px, -1px); box-shadow: 5px 5px 0 var(--acid); }
 
 .turn-ribbon { margin: 13px 0; display: flex; align-items: center; gap: 7px; overflow-x: auto; padding: 3px 0 7px; }
 .turn-label { margin-right: 6px; font-size: 9px; font-weight: 1000; letter-spacing: .16em; white-space: nowrap; }
@@ -413,9 +413,18 @@ h1 { margin: 0; font-size: 34px; line-height: .95; letter-spacing: -.06em; font-
   .match-header { grid-template-columns: 1fr auto; }.scoreboard { grid-row: 2; grid-column: 1 / -1; justify-self: center; }.header-actions { grid-column: 2; grid-row: 1; }
   .game-layout { grid-template-columns: 1fr; }.control-column { display: grid; grid-template-columns: 1fr 1fr; align-items: start; }.match-log { grid-column: 1 / -1; }
 }
+@media (max-width: 1399px) {
+  .header-shortcut { min-width: 92px; min-height: 36px; grid-template-columns: 27px auto; grid-template-rows: 1fr; column-gap: 6px; padding: 5px 7px 5px 5px; }
+  .header-shortcut > span { grid-row: 1; }
+  .header-shortcut strong { align-self: center; font-size: 9px; }
+  .header-shortcut small { display: none; }
+}
 @media (max-width: 700px) {
   .game-shell { width: min(100% - 16px, 1540px); padding-top: 8px; }.match-header { gap: 10px; }.brand-mark { width: 43px; height: 43px; font-size: 28px; }.kicker { display: none; } h1 { font-size: 27px; }
-  .header-actions { flex-direction: column; align-items: flex-end; }.possession, .quiet-button { padding: 6px 8px; font-size: 8px; }
+  .header-actions { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 5px; }.possession, .quiet-button { padding: 6px 8px; font-size: 8px; }
+  .header-shortcuts { gap: 4px; }
+  .header-shortcut { min-width: auto; grid-template-columns: 25px auto; padding-right: 6px; }
+  .header-shortcut strong { font-size: 8px; }
   .team-score { min-width: 82px; }.team-score strong { font-size: 28px; }.game-layout { display: block; }.control-column { display: flex; margin-top: 12px; }
   .pitch-frame { padding: 28px 22px 32px 7px; }.file-labels { left: 7px; right: 22px; }.player-token { inset: 6%; }.player-token small { display: none; }.ball { right: -5px; top: -5px; }
   .action-banner { min-height: 68px; grid-template-columns: 72px 1fr; padding: 8px 9px; }.action-banner strong { font-size: 12px; }.action-banner p { font-size: 9px; }
@@ -575,14 +584,13 @@ h1 { margin: 0; font-size: 34px; line-height: .95; letter-spacing: -.06em; font-
   .turn-chip { min-width: 72px; padding: 6px 8px; }
   .deck-count { margin-left: auto; white-space: nowrap; }
   .game-layout { display: contents; }
-  .pitch-panel { grid-column: 2; grid-row: 2 / 4; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+  .pitch-panel { --pitch-ui-width: min(100%, calc(80dvh - 136px)); grid-column: 2; grid-row: 2 / 4; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; justify-items: end; }
+  .action-banner, .pitch-frame, .pitch-legend { width: var(--pitch-ui-width); }
   .action-banner { min-height: 54px; margin: 0 0 7px; padding: 7px 10px; }
   .pitch-frame {
-    width: min(100%, calc(80dvh - 136px));
     min-width: 0;
     max-width: none;
     align-self: center;
-    justify-self: end;
     padding: 38px 29px 42px 11px;
   }
   .pitch-legend { padding-top: 7px; justify-content: flex-end; }
@@ -635,7 +643,9 @@ h1 { margin: 0; font-size: 34px; line-height: .95; letter-spacing: -.06em; font-
 @media (min-width: 900px) and (max-width: 1399px) {
   .game-shell { width: min(100% - 20px, 1360px); grid-template-rows: auto auto minmax(0,1fr); }
   .game-layout { grid-template-columns: minmax(540px, 1fr) minmax(320px, 380px); }
-  .pitch-frame { width: min(100%, calc(80dvh - 176px)); min-width: 0; }
+  .pitch-panel { --pitch-ui-width: min(100%, calc(80dvh - 176px)); justify-items: center; }
+  .action-banner, .pitch-frame, .pitch-legend { width: var(--pitch-ui-width); }
+  .pitch-frame { min-width: 0; }
   .control-column { max-height: calc(100dvh - 220px); }
   .command-deck { grid-template-columns: minmax(0,1fr) minmax(260px, 34%); }
   .pitch-panel { grid-column: 1; grid-row: 1; }
@@ -662,8 +672,8 @@ h1 { margin: 0; font-size: 34px; line-height: .95; letter-spacing: -.06em; font-
 .tutorial-launch {
   position: fixed;
   z-index: 120;
-  top: 24px;
-  right: 176px;
+  top: 14px;
+  right: 14px;
   display: grid;
   grid-template-columns: 42px auto;
   grid-template-rows: auto auto;
