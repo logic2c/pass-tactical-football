@@ -45,11 +45,13 @@ test("the interactive tutorial covers the complete basic learning path", async (
   assert.match(desktop, /loadFile\(gamePage, \{ query: \{ tutorial: "1" \} \}\)/);
   assert.match(tutorial, /界面与按键总览/);
   assert.match(tutorial, /objective: "将 R1 移动到 e5/);
-  assert.match(tutorial, /将 R1 从 g3 移到 e5/);
-  assert.match(tutorial, /objective: "将 R1 移动到 d4/);
-  assert.match(tutorial, /selectedCard\?\.id === "block-rock"/);
+  assert.match(tutorial, /将 R1 从 e3 直接移动到 e5/);
+  assert.match(tutorial, /playerById\(game, "r1"\)\.hand = \[actionCard\("move-rock", "rock"\)\]/);
+  assert.match(tutorial, /objective: "绕开 R2，将 R1 移动到 e5/);
+  assert.match(tutorial, /selectedCard\.id === "block-rock" \? 62/);
   assert.match(tutorial, /objective: "将足球传到 e6 的 R2/);
-  assert.match(tutorial, /objective: "将足球传到 e5 的 R2/);
+  assert.match(tutorial, /objective: "通过 R2 接力，将足球传到 e7 的 R3/);
+  assert.match(tutorial, /actionCard\("relay-rock", "rock"\)/);
   assert.match(tutorial, /objective: "完成一次战术整备/);
   assert.match(tutorial, /objective: "将足球传到 d8 的 R3/);
   assert.match(tutorial, /R2 以无球状态开始回合，拥有2点行动力/);
@@ -57,8 +59,9 @@ test("the interactive tutorial covers the complete basic learning path", async (
   assert.match(tutorial, /objective: "将足球射入蓝方球门 E/);
   assert.match(tutorial, /objective: "将足球射入蓝方球门 D/);
   assert.match(tutorial, /selectedCard\.id === "space-pass-rock"/);
-  assert.match(tutorial, /selectedCard\.id === "blocked-knight"/);
+  assert.match(tutorial, /selectedCard\.id === "goal-bishop" && position !== 81/);
   assert.match(tutorial, /selectedCard\.id === "final-pass"/);
+  assert.match(tutorial, /tag: "FINAL DRILL"[\s\S]*?allowed: \["pass"\]/);
   assert.match(tutorial, /chapterCopy\.brief/);
   assert.match(tutorial, /!completed && showHint && <div id="tutorial-detailed-hint"/);
   assert.match(tutorial, /详细步骤/);
@@ -72,6 +75,34 @@ test("the interactive tutorial covers the complete basic learning path", async (
   assert.doesNotMatch(tutorial, /chapterCopy\.lesson\.slice/);
   assert.match(tutorial, /localStorage\.setItem\("pass-tutorial-unlocked"/);
   assert.doesNotMatch(tutorial, /specialCards|resolveTackleAction|resolveSprintAction/);
+  assert.doesNotMatch(tutorial, /attemptedBlock|blocked-knight|press-two|target-rock/);
+});
+
+test("the first movement tutorial uses the shortest legal Rock route", () => {
+  const r1 = { team: "red", position: 60, hand: [{ kind: "action" }] };
+  const otherPlayers = [
+    { team: "red", position: 68, hand: [] },
+    { team: "red", position: 69, hand: [] },
+    { team: "blue", position: 4, hand: [] },
+    { team: "blue", position: 12, hand: [] },
+    { team: "blue", position: 20, hand: [] },
+  ];
+
+  assert.equal(movementTargets({ offense: "red", players: [r1, ...otherPlayers] }, r1, "rock").has(44), true);
+  assert.deepEqual(movementPath(60, 44, "rock"), [52, 44]);
+});
+
+test("blocking tutorials teach legal detours and relays instead of forced failures", () => {
+  const r1 = { team: "red", position: 60, hand: [{ kind: "action" }] };
+  const r2 = { team: "red", position: 52, hand: [] };
+  const moveGame = { offense: "red", players: [r1, r2] };
+
+  assert.equal(movementTargets(moveGame, r1, "rock").has(44), false);
+  assert.equal(movementTargets(moveGame, r1, "rock").has(62), true);
+  assert.deepEqual(movementPath(62, 44, "bishop"), [53, 44]);
+  assert.equal(passBlockedByPlayer(60, 28, "rock", [{ position: 44, team: "red" }]), true);
+  assert.deepEqual(passPath(60, 44, "rock"), [52]);
+  assert.deepEqual(passPath(44, 28, "rock"), [36]);
 });
 
 test("server-renders the PASS game shell", async () => {
