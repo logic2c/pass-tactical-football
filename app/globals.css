@@ -739,6 +739,9 @@ h1 { margin: 0; font-size: 34px; line-height: .95; letter-spacing: -.06em; font-
 .tutorial-feedback, .tutorial-hint { margin: 10px 0 0; padding: 8px 9px; border: 1px solid #df4c42; background: #fff2ee; font-size: 11px; line-height: 1.45; }
 .tutorial-feedback.success { border-color: #799600; background: #f1facd; }
 .tutorial-hint { border-style: dashed; border-color: var(--ink); background: #fff; }
+.tutorial-hint strong { display: block; margin-bottom: 6px; font-size: 10px; letter-spacing: .05em; }
+.tutorial-hint p { margin: 0; padding: 5px 0; border-top: 1px solid #dedbd1; font-size: 11px; line-height: 1.5; }
+.tutorial-hint strong + p { border-top: 0; padding-top: 0; }
 .tutorial-coach-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
 .tutorial-coach-actions button { min-height: 34px; padding: 7px 11px; }
 

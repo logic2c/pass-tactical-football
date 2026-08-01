@@ -59,6 +59,10 @@ test("the interactive tutorial covers the complete basic learning path", async (
   assert.match(tutorial, /selectedCard\.id === "space-pass-rock"/);
   assert.match(tutorial, /selectedCard\.id === "blocked-knight"/);
   assert.match(tutorial, /selectedCard\.id === "final-pass"/);
+  assert.match(tutorial, /chapterCopy\.brief/);
+  assert.match(tutorial, /showHint && <div className="tutorial-hint">/);
+  assert.match(tutorial, /详细步骤/);
+  assert.doesNotMatch(tutorial, /chapterCopy\.lesson\.slice/);
   assert.match(tutorial, /localStorage\.setItem\("pass-tutorial-unlocked"/);
   assert.doesNotMatch(tutorial, /specialCards|resolveTackleAction|resolveSprintAction/);
 });

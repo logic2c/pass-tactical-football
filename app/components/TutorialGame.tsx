@@ -26,6 +26,7 @@ type TutorialChapter = {
   title: string;
   tag: string;
   objective: string;
+  brief: string;
   lesson: string[];
   allowed: TutorialAction[];
 };
@@ -35,6 +36,7 @@ const CHAPTERS: TutorialChapter[] = [
     title: "界面与按键总览",
     tag: "ORIENTATION",
     objective: "完成界面总览。",
+    brief: "跟随高亮区域阅读说明，然后开始训练。",
     lesson: ["第 1 步：阅读当前高亮区域的说明。", "第 2 步：点击“下一个界面区域”，依次查看全部 9 个区域。", "第 3 步：点击“开始训练”。"],
     allowed: [],
   },
@@ -42,6 +44,7 @@ const CHAPTERS: TutorialChapter[] = [
     title: "移动球员",
     tag: "MOVE",
     objective: "将 R1 移动到 e5。",
+    brief: "点击一张手牌，再点击“移动”，最后点击棋盘上的目标格。",
     lesson: ["第 1 步：选择手牌 Rock。", "第 2 步：点击“移动”，再点击 g3，将 R1 从 e3 移到 g3。", "第 3 步：选择手牌 Bishop。", "第 4 步：点击“移动”，再点击 e5，将 R1 从 g3 移到 e5。"],
     allowed: ["move"],
   },
@@ -49,6 +52,7 @@ const CHAPTERS: TutorialChapter[] = [
     title: "路线不能穿人",
     tag: "BLOCKING",
     objective: "将 R1 移动到 d4。",
+    brief: "选择手牌并点击“移动”。如果路线被球员挡住，请换一张路线不同的牌。",
     lesson: ["第 1 步：选择手牌 Rock。", "第 2 步：点击“移动”，再点击 e5；位于 e4 的 R2 会阻挡这条路线。", "第 3 步：选择手牌 Bishop。", "第 4 步：点击“移动”，再点击 d4，绕开队友完成本关。"],
     allowed: ["move"],
   },
@@ -56,6 +60,7 @@ const CHAPTERS: TutorialChapter[] = [
     title: "直接传给队友",
     tag: "DIRECT PASS",
     objective: "将足球传到 e6 的 R2。",
+    brief: "选择持球者的手牌，点击“传球”，再点击接球队友。",
     lesson: ["第 1 步：选择 R1 手牌中的 Rock。", "第 2 步：点击“传球”。", "第 3 步：点击 e6 的 R2。"],
     allowed: ["pass"],
   },
@@ -63,6 +68,7 @@ const CHAPTERS: TutorialChapter[] = [
     title: "队友也会挡球",
     tag: "PASS LANE",
     objective: "将足球传到 e5 的 R2。",
+    brief: "选择手牌并点击“传球”。传球不能越过线路上的第一名球员。",
     lesson: ["第 1 步：选择 R1 手牌中的 Rock。", "第 2 步：点击“传球”，再点击 e7 的 R3；e5 的 R2 会挡住路线。", "第 3 步：再次点击 e5 的 R2，将球传给最先挡路的队友。"],
     allowed: ["pass"],
   },
@@ -70,6 +76,7 @@ const CHAPTERS: TutorialChapter[] = [
     title: "行动力与手牌",
     tag: "TEMPO",
     objective: "完成一次战术整备。",
+    brief: "本回合不要使用手牌，直接点击操作区中的“战术整备”。",
     lesson: ["第 1 步：不要选择或使用任何手牌。", "第 2 步：点击“战术整备 · 抽 2”。", "完成后 R1 会跳过出牌阶段并额外抽取 2 张牌。"],
     allowed: ["skip"],
   },
@@ -77,6 +84,7 @@ const CHAPTERS: TutorialChapter[] = [
     title: "空位传球与接应",
     tag: "SPACE PASS",
     objective: "将足球传到 d8 的 R3。",
+    brief: "先把球传到空格，再让队友移动经过足球，拾球后继续传球。",
     lesson: ["第 1 步：选择 R1 的 Rock，点击“传球”，再点击空格 e5。", "第 2 步：轮到 R2 后，选择 Bishop，点击“移动”，再点击 d6；R2 会在途中经过 e5 并拾球。", "第 3 步：选择 R2 的 Rock，点击“传球”，再点击 d8 的 R3。"],
     allowed: ["move", "pass"],
   },
@@ -84,6 +92,7 @@ const CHAPTERS: TutorialChapter[] = [
     title: "基础上抢",
     tag: "PRESS",
     objective: "让 B1 夺得足球。",
+    brief: "选择一张用于弃置的手牌，点击“上抢”，再点击对方持球者。",
     lesson: ["第 1 步：选择 B1 的 Bishop，点击“上抢”，再点击 d3 的 R1。", "第 2 步：第一次上抢会弃掉 R1 的普通牌。", "第 3 步：选择 B1 的 Rock，再次点击“上抢”和 d3 的 R1，夺得足球。"],
     allowed: ["press"],
   },
@@ -91,6 +100,7 @@ const CHAPTERS: TutorialChapter[] = [
     title: "禁区与射门",
     tag: "FINISHING",
     objective: "将足球射入蓝方球门 E。",
+    brief: "选择持球者的手牌，点击“传球”，再点击场外球门完成射门。",
     lesson: ["第 1 步：选择 R1 的 Knight，点击“传球”，再点击蓝方球门 D；cX 的 B1 会挡住路线。", "第 2 步：选择 R1 的 Bishop，点击“传球”，再点击蓝方球门 E 完成射门。"],
     allowed: ["pass"],
   },
@@ -98,6 +108,7 @@ const CHAPTERS: TutorialChapter[] = [
     title: "完整进攻演练",
     tag: "FINAL DRILL",
     objective: "将足球射入蓝方球门 D。",
+    brief: "先把球传给更接近球门的队友，再由接球队员完成射门。",
     lesson: ["第 1 步：选择 R1 的 Rock，点击“传球”，再点击 d8 的 R2。", "第 2 步：轮到 R2 后，选择 Rock，点击“传球”，再点击蓝方球门 D。"],
     allowed: ["move", "pass"],
   },
@@ -540,10 +551,9 @@ export default function TutorialGame() {
         </div>
         <p className="tutorial-kicker">{chapter === 0 ? `${overviewStep + 1} / ${OVERVIEW.length} · ${overview.title}` : chapterCopy.title}</p>
         <h2>{chapter === 0 ? overview.title : chapterCopy.objective}</h2>
-        <p className="tutorial-body">{chapter === 0 ? overview.body : chapterCopy.lesson[0]}</p>
-        {chapter !== 0 && chapterCopy.lesson.slice(1).map((line) => <p className="tutorial-note" key={line}>{line}</p>)}
+        <p className="tutorial-body">{chapter === 0 ? overview.body : chapterCopy.brief}</p>
         {feedback && <p className={`tutorial-feedback ${completed ? "success" : ""}`}>{feedback}</p>}
-        {chapter !== 0 && showHint && <p className="tutorial-hint">提示：{chapterCopy.objective}</p>}
+        {chapter !== 0 && showHint && <div className="tutorial-hint"><strong>详细步骤</strong>{chapterCopy.lesson.map((line) => <p key={line}>{line}</p>)}</div>}
         <div className="tutorial-coach-actions">
           {!completed && chapter === 0 && <button className="primary-action" onClick={nextOverview}>{overviewStep === OVERVIEW.length - 1 ? "开始训练" : "下一个界面区域"}</button>}
           {!completed && chapter !== 0 && <button className="secondary-action" onClick={() => setShowHint((value) => !value)}>{showHint ? "收起提示" : "需要提示"}</button>}
