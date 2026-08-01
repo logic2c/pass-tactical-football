@@ -328,6 +328,7 @@ test("desktop match chrome aligns the feed with the pitch and keeps shortcuts in
   assert.match(css, /--pitch-ui-width: min\(100%, calc\(80dvh - 136px\)\)/);
   assert.match(css, /--pitch-ui-width: min\(100%, calc\(80dvh - 176px\)\)/);
   assert.match(css, /\.action-banner, \.pitch-frame, \.pitch-legend \{ width: var\(--pitch-ui-width\); \}/);
+  assert.match(css, /align-self: center;\s+justify-self: end;\s+padding: 38px 29px 42px 11px/);
   assert.match(page, /className="header-shortcuts"/);
   assert.match(board, /\{headerTools\}/);
   assert.doesNotMatch(css, /\.multiplayer-launch/);

@@ -591,6 +591,7 @@ h1 { margin: 0; font-size: 34px; line-height: .95; letter-spacing: -.06em; font-
     min-width: 0;
     max-width: none;
     align-self: center;
+    justify-self: end;
     padding: 38px 29px 42px 11px;
   }
   .pitch-legend { padding-top: 7px; justify-content: flex-end; }
