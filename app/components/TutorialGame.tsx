@@ -41,15 +41,15 @@ const CHAPTERS: TutorialChapter[] = [
   {
     title: "移动球员",
     tag: "MOVE",
-    objective: "先使用一张 Rock 移动，再使用一张 Bishop 移动。",
-    lesson: ["点击手牌，再点击“移动”。", "最后点击棋盘上的绿色高亮格。"],
+    objective: "将 R1 移动到 e5。",
+    lesson: ["第 1 步：选择手牌 Rock。", "第 2 步：点击“移动”，再点击 g3，将 R1 从 e3 移到 g3。", "第 3 步：选择手牌 Bishop。", "第 4 步：点击“移动”，再点击 e5，将 R1 从 g3 移到 e5。"],
     allowed: ["move"],
   },
   {
     title: "路线不能穿人",
     tag: "BLOCKING",
-    objective: "先尝试穿过 R2 到达其后方，再改用 Bishop 离开被封锁的直线。",
-    lesson: ["队友和对手都会阻挡移动路线。", "不能走直线时，换一种路线通常比消耗更多资源更好。"],
+    objective: "将 R1 移动到 d4。",
+    lesson: ["第 1 步：选择手牌 Rock。", "第 2 步：点击“移动”，再点击 e5；位于 e4 的 R2 会阻挡这条路线。", "第 3 步：选择手牌 Bishop。", "第 4 步：点击“移动”，再点击 d4，绕开队友完成本关。"],
     allowed: ["move"],
   },
   {
@@ -304,10 +304,24 @@ export default function TutorialGame() {
 
   function handleCellClick(position: number) {
     if (completed || chapter === 0) return;
-    if (chapter === 2 && actionMode === "move" && position === 44) {
+    if (chapter === 2 && actionMode === "move" && selectedCard?.id === "block-rock") {
+      if (position !== 44) {
+        setFeedback("本关第一步的指定目标是 e5。请选择 Rock，点击“移动”，再点击 e5。 ");
+        return;
+      }
       setAttemptedBlock(true);
-      setFeedback("R2 位于直线路径中间，所以不能穿过去。请选择 Bishop，移动到 R2 左侧的斜向格。 ");
+      setFeedback("Rock 的 e3 → e5 路线被位于 e4 的 R2 阻挡。现在请选择 Bishop，点击“移动”，再点击 d4。 ");
       return;
+    }
+    if (chapter === 2 && actionMode === "move" && selectedCard?.id === "escape-bishop") {
+      if (!attemptedBlock) {
+        setFeedback("请先完成第一步：使用 Rock 尝试从 e3 移到 e5。 ");
+        return;
+      }
+      if (position !== 51) {
+        setFeedback("第二步的指定目标是 d4。请选择 Bishop，点击“移动”，再点击 d4。 ");
+        return;
+      }
     }
     if (chapter === 4 && actionMode === "pass" && position === 28) {
       setAttemptedBlock(true);

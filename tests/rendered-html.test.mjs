@@ -44,6 +44,10 @@ test("the interactive tutorial covers the complete basic learning path", async (
   assert.match(page, /<TutorialGame \/>/);
   assert.match(desktop, /loadFile\(gamePage, \{ query: \{ tutorial: "1" \} \}\)/);
   assert.match(tutorial, /界面与按键总览/);
+  assert.match(tutorial, /objective: "将 R1 移动到 e5/);
+  assert.match(tutorial, /将 R1 从 g3 移到 e5/);
+  assert.match(tutorial, /objective: "将 R1 移动到 d4/);
+  assert.match(tutorial, /selectedCard\?\.id === "block-rock"/);
   assert.match(tutorial, /行动力与手牌/);
   assert.match(tutorial, /空位传球与接应/);
   assert.match(tutorial, /R2 以无球状态开始回合，拥有2点行动力/);
