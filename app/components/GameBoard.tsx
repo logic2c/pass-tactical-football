@@ -285,7 +285,7 @@ export default function GameBoard({
             </div>
           </section>
           <div className="pitch-frame">
-            <div className={`pitch perspective-${perspectiveTeam}`} role="grid" aria-label={`8乘8足球棋盘，${describeTeam(perspectiveTeam)}视角`}>
+            <div className={`pitch perspective-${perspectiveTeam}`} role="grid" aria-label={`8乘10足球棋盘，${describeTeam(perspectiveTeam)}视角`}>
               <div className="center-circle" aria-hidden="true" /><div className="halfway-line" aria-hidden="true" />
               <div className="trace-layer" aria-hidden="true">
                 {traceSegments.map(({ trace, from, to, segment }) => {

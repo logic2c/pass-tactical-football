@@ -60,8 +60,15 @@ test("the interactive tutorial covers the complete basic learning path", async (
   assert.match(tutorial, /selectedCard\.id === "blocked-knight"/);
   assert.match(tutorial, /selectedCard\.id === "final-pass"/);
   assert.match(tutorial, /chapterCopy\.brief/);
-  assert.match(tutorial, /showHint && <div className="tutorial-hint">/);
+  assert.match(tutorial, /!completed && showHint && <div id="tutorial-detailed-hint"/);
   assert.match(tutorial, /详细步骤/);
+  assert.match(tutorial, /队友和对手都会阻挡/);
+  assert.match(tutorial, /setShowHint\(false\)/);
+  assert.match(tutorial, /const \[showHint, setShowHint\] = useState\(false\)/);
+  assert.match(tutorial, /aria-expanded=\{showHint\}/);
+  assert.match(tutorial, /只有防守方能对一格内的持球者上抢/);
+  assert.match(tutorial, /身处对方禁区时不能射门/);
+  assert.match(await readFile(new URL("../app/components/GameBoard.tsx", import.meta.url), "utf8"), /8乘10足球棋盘/);
   assert.doesNotMatch(tutorial, /chapterCopy\.lesson\.slice/);
   assert.match(tutorial, /localStorage\.setItem\("pass-tutorial-unlocked"/);
   assert.doesNotMatch(tutorial, /specialCards|resolveTackleAction|resolveSprintAction/);

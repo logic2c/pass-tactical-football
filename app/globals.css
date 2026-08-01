@@ -717,6 +717,8 @@ h1 { margin: 0; font-size: 34px; line-height: .95; letter-spacing: -.06em; font-
   left: 20px;
   bottom: 20px;
   width: min(348px, calc(100vw - 40px));
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
   padding: 14px;
   border: 1px solid var(--ink);
   background: rgba(247, 244, 234, .98);
@@ -735,6 +737,7 @@ h1 { margin: 0; font-size: 34px; line-height: .95; letter-spacing: -.06em; font-
 .tutorial-kicker { margin: 0 0 5px; color: #7a8000; font: 900 10px/1.2 "Arial Narrow", "Microsoft YaHei UI", sans-serif; letter-spacing: .06em; text-transform: uppercase; }
 .tutorial-coach h2 { margin: 0 0 8px; font-size: 19px; line-height: 1.18; }
 .tutorial-body, .tutorial-note { margin: 0 0 6px; font-size: 12px; line-height: 1.55; }
+.tutorial-body strong { margin-right: 4px; color: #5f6800; }
 .tutorial-note { padding-left: 10px; border-left: 3px solid #c8c4b7; color: #555953; }
 .tutorial-feedback, .tutorial-hint { margin: 10px 0 0; padding: 8px 9px; border: 1px solid #df4c42; background: #fff2ee; font-size: 11px; line-height: 1.45; }
 .tutorial-feedback.success { border-color: #799600; background: #f1facd; }
