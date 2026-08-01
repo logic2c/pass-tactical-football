@@ -584,13 +584,13 @@ h1 { margin: 0; font-size: 34px; line-height: .95; letter-spacing: -.06em; font-
   .turn-chip { min-width: 72px; padding: 6px 8px; }
   .deck-count { margin-left: auto; white-space: nowrap; }
   .game-layout { display: contents; }
-  .pitch-panel { --pitch-ui-width: min(100%, calc(80dvh - 136px)); grid-column: 2; grid-row: 2 / 4; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; justify-items: end; }
+  .pitch-panel { --pitch-ui-width: min(100%, calc(80dvh - 160px)); grid-column: 2; grid-row: 2 / 4; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; justify-items: end; }
   .action-banner, .pitch-frame, .pitch-legend { width: var(--pitch-ui-width); }
   .action-banner { min-height: 54px; margin: 0 0 7px; padding: 7px 10px; }
   .pitch-frame {
     min-width: 0;
     max-width: none;
-    align-self: center;
+    align-self: start;
     justify-self: end;
     padding: 38px 29px 42px 11px;
   }

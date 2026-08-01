@@ -325,10 +325,10 @@ test("desktop match chrome aligns the feed with the pitch and keeps shortcuts in
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const board = await readFile(new URL("../app/components/GameBoard.tsx", import.meta.url), "utf8");
 
-  assert.match(css, /--pitch-ui-width: min\(100%, calc\(80dvh - 136px\)\)/);
+  assert.match(css, /--pitch-ui-width: min\(100%, calc\(80dvh - 160px\)\)/);
   assert.match(css, /--pitch-ui-width: min\(100%, calc\(80dvh - 176px\)\)/);
   assert.match(css, /\.action-banner, \.pitch-frame, \.pitch-legend \{ width: var\(--pitch-ui-width\); \}/);
-  assert.match(css, /align-self: center;\s+justify-self: end;\s+padding: 38px 29px 42px 11px/);
+  assert.match(css, /align-self: start;\s+justify-self: end;\s+padding: 38px 29px 42px 11px/);
   assert.match(page, /className="header-shortcuts"/);
   assert.match(board, /\{headerTools\}/);
   assert.doesNotMatch(css, /\.multiplayer-launch/);
